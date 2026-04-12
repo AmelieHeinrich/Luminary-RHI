@@ -87,3 +87,48 @@ void lrhi_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, 
 {
     ((LRHIDeviceBase*)device)->vtable->buffer_readback(device, buffer, out_data, data_size, out_error);
 }
+
+void lrhi_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_command_queue(device, out_queue, out_error);
+}
+
+void lrhi_destroy_command_queue(LRHICommandQueue queue)
+{
+    ((LRHICommandQueueBase*)queue)->vtable->destroy_command_queue(queue);
+}
+
+void lrhi_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error)
+{
+    ((LRHICommandQueueBase*)queue)->vtable->signal_fence(queue, fence, value, out_error);
+}
+
+void lrhi_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
+{
+    ((LRHICommandQueueBase*)queue)->vtable->wait_fence(queue, fence, value, timeout_ns, out_error);
+}
+
+void lrhi_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_fence(device, initial_value, out_fence, out_error);
+}
+
+void lrhi_destroy_fence(LRHIFence fence)
+{
+    ((LRHIFenceBase*)fence)->vtable->destroy_fence(fence);
+}
+
+uint64_t lrhi_fence_get_value(LRHIFence fence)
+{
+    return ((LRHIFenceBase*)fence)->vtable->get_value(fence);
+}
+
+void lrhi_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error)
+{
+    ((LRHIFenceBase*)fence)->vtable->signal(fence, value, out_error);
+}
+
+void lrhi_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
+{
+    ((LRHIFenceBase*)fence)->vtable->wait(fence, value, timeout_ns, out_error);
+}

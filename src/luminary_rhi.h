@@ -177,18 +177,24 @@ void lrhi_buffer_unmap(LRHIBuffer buffer);
 void lrhi_texture_readback(LRHIDevice device, LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
 void lrhi_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
 
+// Command Queue functions
+void lrhi_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
+void lrhi_destroy_command_queue(LRHICommandQueue queue);
+/// Enqueues a GPU-side signal: the queue will set the fence to value after all previously submitted work completes.
+void lrhi_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
+/// Enqueues a GPU-side wait: the queue will stall until the fence reaches value before starting subsequent work.
+/// On Metal 3 this blocks the CPU submission thread (no native GPU-side queue wait available).
+void lrhi_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+
+// Fence functions
+void     lrhi_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
+void     lrhi_destroy_fence(LRHIFence fence);
+uint64_t lrhi_fence_get_value(LRHIFence fence);
+void     lrhi_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error);
+void     lrhi_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+
 /*
     TODO:
-        Command Queue:
-            - create/destroy
-            - submit command list
-            - signal fence
-            - wait for fence
-        Fence:
-            - create/destroy
-            - get status
-            - signal
-            - wait
         Swap Chain:
             - create/destroy
             - get back buffer

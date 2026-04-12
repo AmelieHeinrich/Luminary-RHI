@@ -1,6 +1,9 @@
 #include "luminary_rhi_internal.h"
 
 #include <Metal/Metal.h>
+#include <dispatch/dispatch.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 typedef struct LRHIDeviceMetal3 {
     LRHIDeviceBase base;
@@ -19,6 +22,25 @@ typedef struct LRHIBufferMetal3 {
     id<MTLBuffer> buffer;
     LRHIBufferInfo info;
 } LRHIBufferMetal3;
+
+typedef struct LRHICommandQueueMetal3 {
+    LRHICommandQueueBase base;
+    id<MTLCommandQueue>  queue;
+    id<MTLDevice>        device;
+} LRHICommandQueueMetal3;
+
+typedef struct LRHIFenceWaiterMetal3 {
+    dispatch_semaphore_t          semaphore;
+    uint64_t                      target_value;
+    struct LRHIFenceWaiterMetal3* next;
+} LRHIFenceWaiterMetal3;
+
+typedef struct LRHIFenceMetal3 {
+    LRHIFenceBase          base;
+    _Atomic uint64_t       value;
+    pthread_mutex_t        waiters_mutex;
+    LRHIFenceWaiterMetal3* waiters;
+} LRHIFenceMetal3;
 
 // Forward declarations
 static MTLPixelFormat  lrhi_metal3_pixel_format(LRHITextureFormat format);
@@ -41,15 +63,42 @@ static void*           lrhi_metal3_buffer_map(LRHIBuffer buffer, LRHIError* out_
 static void            lrhi_metal3_buffer_unmap(LRHIBuffer buffer);
 static void            lrhi_metal3_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
 
+static void            lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
+static void            lrhi_metal3_destroy_command_queue(LRHICommandQueue queue);
+static void            lrhi_metal3_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
+static void            lrhi_metal3_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+
+static void            lrhi_metal3_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
+static void            lrhi_metal3_destroy_fence(LRHIFence fence);
+static uint64_t        lrhi_metal3_fence_get_value(LRHIFence fence);
+static void            lrhi_metal3_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error);
+static void            lrhi_metal3_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+static void            lrhi_metal3_fence_update_value(LRHIFenceMetal3* fence, uint64_t new_value);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal3_device_vtable = {
-    .destroy_device   = lrhi_metal3_destroy_device,
-    .get_device_info  = lrhi_metal3_get_device_info,
-    .create_texture   = lrhi_metal3_create_texture,
-    .create_buffer    = lrhi_metal3_create_buffer,
-    .texture_readback = lrhi_metal3_texture_readback,
-    .buffer_readback  = lrhi_metal3_buffer_readback,
+    .destroy_device       = lrhi_metal3_destroy_device,
+    .get_device_info      = lrhi_metal3_get_device_info,
+    .create_texture       = lrhi_metal3_create_texture,
+    .create_buffer        = lrhi_metal3_create_buffer,
+    .texture_readback     = lrhi_metal3_texture_readback,
+    .buffer_readback      = lrhi_metal3_buffer_readback,
+    .create_command_queue = lrhi_metal3_create_command_queue,
+    .create_fence         = lrhi_metal3_create_fence,
+};
+
+static const LRHICommandQueueVTable lrhi_metal3_command_queue_vtable = {
+    .destroy_command_queue = lrhi_metal3_destroy_command_queue,
+    .signal_fence          = lrhi_metal3_command_queue_signal,
+    .wait_fence            = lrhi_metal3_command_queue_wait,
+};
+
+static const LRHIFenceVTable lrhi_metal3_fence_vtable = {
+    .destroy_fence = lrhi_metal3_destroy_fence,
+    .get_value     = lrhi_metal3_fence_get_value,
+    .signal        = lrhi_metal3_fence_signal,
+    .wait          = lrhi_metal3_fence_wait,
 };
 
 static const LRHITextureVTable lrhi_metal3_texture_vtable = {
@@ -241,6 +290,171 @@ static void lrhi_metal3_buffer_readback(LRHIDevice device, LRHIBuffer buffer, vo
             out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
         }
     }
+}
+
+// Command queue and fence
+
+static void lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
+{
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
+    id<MTLCommandQueue> queue = [metal_device->device newCommandQueue];
+    if (!queue) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create command queue");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_queue = NULL;
+        return;
+    }
+
+    LRHICommandQueueMetal3* out = malloc(sizeof(LRHICommandQueueMetal3));
+    out->base.vtable = &lrhi_metal3_command_queue_vtable;
+    out->queue = queue;
+    out->device = metal_device->device;
+    *out_queue = (LRHICommandQueue)out;
+}
+
+static void lrhi_metal3_destroy_command_queue(LRHICommandQueue queue)
+{
+    free(queue);
+}
+
+static void lrhi_metal3_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error)
+{
+    LRHICommandQueueMetal3* metal_queue = (LRHICommandQueueMetal3*)queue;
+    LRHIFenceMetal3* metal_fence = (LRHIFenceMetal3*)fence;
+
+    id<MTLCommandBuffer> cmd = [metal_queue->queue commandBuffer];
+    if (!cmd) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create command buffer for queue signal");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return;
+    }
+
+    [cmd addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull buffer) {
+        (void)buffer;
+        lrhi_metal3_fence_update_value(metal_fence, value);
+    }];
+    [cmd commit];
+}
+
+static void lrhi_metal3_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
+{
+    (void)queue;
+    // Metal 3 has no queue-level event wait. Block CPU submission thread instead.
+    lrhi_metal3_fence_wait(fence, value, timeout_ns, out_error);
+}
+
+static void lrhi_metal3_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error)
+{
+    (void)device;
+    LRHIFenceMetal3* out = malloc(sizeof(LRHIFenceMetal3));
+    out->base.vtable = &lrhi_metal3_fence_vtable;
+    atomic_init(&out->value, initial_value);
+    out->waiters = NULL;
+
+    int mutex_result = pthread_mutex_init(&out->waiters_mutex, NULL);
+    if (mutex_result != 0) {
+        free(out);
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to initialize fence wait mutex");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_fence = NULL;
+        return;
+    }
+
+    *out_fence = (LRHIFence)out;
+}
+
+static void lrhi_metal3_destroy_fence(LRHIFence fence)
+{
+    LRHIFenceMetal3* metal_fence = (LRHIFenceMetal3*)fence;
+    pthread_mutex_destroy(&metal_fence->waiters_mutex);
+    free(metal_fence);
+}
+
+static uint64_t lrhi_metal3_fence_get_value(LRHIFence fence)
+{
+    LRHIFenceMetal3* metal_fence = (LRHIFenceMetal3*)fence;
+    return atomic_load_explicit(&metal_fence->value, memory_order_acquire);
+}
+
+static void lrhi_metal3_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIFenceMetal3* metal_fence = (LRHIFenceMetal3*)fence;
+    lrhi_metal3_fence_update_value(metal_fence, value);
+}
+
+static void lrhi_metal3_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
+{
+    LRHIFenceMetal3* metal_fence = (LRHIFenceMetal3*)fence;
+
+    if (atomic_load_explicit(&metal_fence->value, memory_order_acquire) >= value)
+        return;
+
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    LRHIFenceWaiterMetal3 waiter = {
+        .semaphore = sem,
+        .target_value = value,
+        .next = NULL,
+    };
+
+    pthread_mutex_lock(&metal_fence->waiters_mutex);
+    if (atomic_load_explicit(&metal_fence->value, memory_order_acquire) >= value) {
+        pthread_mutex_unlock(&metal_fence->waiters_mutex);
+        return;
+    }
+
+    waiter.next = metal_fence->waiters;
+    metal_fence->waiters = &waiter;
+    pthread_mutex_unlock(&metal_fence->waiters_mutex);
+
+    dispatch_time_t deadline = (timeout_ns == UINT64_MAX)
+        ? DISPATCH_TIME_FOREVER
+        : dispatch_time(DISPATCH_TIME_NOW, (int64_t)timeout_ns);
+
+    if (dispatch_semaphore_wait(sem, deadline) != 0) {
+        pthread_mutex_lock(&metal_fence->waiters_mutex);
+        LRHIFenceWaiterMetal3** it = &metal_fence->waiters;
+        while (*it) {
+            if (*it == &waiter) {
+                *it = waiter.next;
+                break;
+            }
+            it = &(*it)->next;
+        }
+        pthread_mutex_unlock(&metal_fence->waiters_mutex);
+
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Fence wait timed out");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
+        }
+    }
+}
+
+static void lrhi_metal3_fence_update_value(LRHIFenceMetal3* fence, uint64_t new_value)
+{
+    uint64_t observed = atomic_load_explicit(&fence->value, memory_order_acquire);
+    while (new_value > observed && !atomic_compare_exchange_weak_explicit(&fence->value, &observed, new_value, memory_order_acq_rel, memory_order_acquire)) {
+    }
+
+    uint64_t current_value = atomic_load_explicit(&fence->value, memory_order_acquire);
+    pthread_mutex_lock(&fence->waiters_mutex);
+    LRHIFenceWaiterMetal3** it = &fence->waiters;
+    while (*it) {
+        LRHIFenceWaiterMetal3* waiter = *it;
+        if (waiter->target_value <= current_value) {
+            *it = waiter->next;
+            dispatch_semaphore_signal(waiter->semaphore);
+            continue;
+        }
+        it = &waiter->next;
+    }
+    pthread_mutex_unlock(&fence->waiters_mutex);
 }
 
 // Utils

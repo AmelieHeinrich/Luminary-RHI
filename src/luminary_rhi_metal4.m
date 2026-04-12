@@ -1,6 +1,7 @@
 #include "luminary_rhi_internal.h"
 
 #include <Metal/Metal.h>
+#include <dispatch/dispatch.h>
 
 typedef struct LRHIDeviceMetal4 {
     LRHIDeviceBase base;
@@ -19,6 +20,17 @@ typedef struct LRHIBufferMetal4 {
     id<MTLBuffer> buffer;
     LRHIBufferInfo info;
 } LRHIBufferMetal4;
+
+typedef struct LRHICommandQueueMetal4 {
+    LRHICommandQueueBase base;
+    id<MTL4CommandQueue> queue;
+    id<MTLDevice> device;
+} LRHICommandQueueMetal4;
+
+typedef struct LRHIFenceMetal4 {
+    LRHIFenceBase base;
+    id<MTLSharedEvent> event;
+} LRHIFenceMetal4;
 
 // Forward declarations
 static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
@@ -41,15 +53,41 @@ static void*           lrhi_metal4_buffer_map(LRHIBuffer buffer, LRHIError* out_
 static void            lrhi_metal4_buffer_unmap(LRHIBuffer buffer);
 static void            lrhi_metal4_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
 
+static void            lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
+static void            lrhi_metal4_destroy_command_queue(LRHICommandQueue queue);
+static void            lrhi_metal4_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
+static void            lrhi_metal4_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+
+static void            lrhi_metal4_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
+static void            lrhi_metal4_destroy_fence(LRHIFence fence);
+static uint64_t        lrhi_metal4_fence_get_value(LRHIFence fence);
+static void            lrhi_metal4_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error);
+static void            lrhi_metal4_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
-    .destroy_device   = lrhi_metal4_destroy_device,
-    .get_device_info  = lrhi_metal4_get_device_info,
-    .create_texture   = lrhi_metal4_create_texture,
-    .create_buffer    = lrhi_metal4_create_buffer,
-    .texture_readback = lrhi_metal4_texture_readback,
-    .buffer_readback  = lrhi_metal4_buffer_readback,
+    .destroy_device       = lrhi_metal4_destroy_device,
+    .get_device_info      = lrhi_metal4_get_device_info,
+    .create_texture       = lrhi_metal4_create_texture,
+    .create_buffer        = lrhi_metal4_create_buffer,
+    .texture_readback     = lrhi_metal4_texture_readback,
+    .buffer_readback      = lrhi_metal4_buffer_readback,
+    .create_command_queue = lrhi_metal4_create_command_queue,
+    .create_fence         = lrhi_metal4_create_fence,
+};
+
+static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
+    .destroy_command_queue = lrhi_metal4_destroy_command_queue,
+    .signal_fence          = lrhi_metal4_command_queue_signal,
+    .wait_fence            = lrhi_metal4_command_queue_wait,
+};
+
+static const LRHIFenceVTable lrhi_metal4_fence_vtable = {
+    .destroy_fence = lrhi_metal4_destroy_fence,
+    .get_value     = lrhi_metal4_fence_get_value,
+    .signal        = lrhi_metal4_fence_signal,
+    .wait          = lrhi_metal4_fence_wait,
 };
 
 static const LRHITextureVTable lrhi_metal4_texture_vtable = {
@@ -240,6 +278,113 @@ static void lrhi_metal4_buffer_readback(LRHIDevice device, LRHIBuffer buffer, vo
             snprintf(out_error->message, sizeof(out_error->message), "Failed to read buffer data");
             out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
         }
+    }
+}
+
+// Command queue and fence
+
+static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
+{
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
+    id<MTLCommandQueue> base_queue = [metal_device->device newCommandQueue];
+    if (!base_queue) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create command queue");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_queue = NULL;
+        return;
+    }
+
+    LRHICommandQueueMetal4* out = malloc(sizeof(LRHICommandQueueMetal4));
+    out->base.vtable = &lrhi_metal4_command_queue_vtable;
+    out->queue = (id<MTL4CommandQueue>)base_queue;
+    out->device = metal_device->device;
+    *out_queue = (LRHICommandQueue)out;
+}
+
+static void lrhi_metal4_destroy_command_queue(LRHICommandQueue queue)
+{
+    free(queue);
+}
+
+static void lrhi_metal4_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+    LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
+    [metal_queue->queue signalEvent:metal_fence->event value:value];
+}
+
+static void lrhi_metal4_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
+{
+    (void)timeout_ns;
+    (void)out_error;
+    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+    LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
+    [metal_queue->queue waitForEvent:metal_fence->event value:value];
+}
+
+static void lrhi_metal4_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error)
+{
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
+    id<MTLSharedEvent> event = [metal_device->device newSharedEvent];
+    if (!event) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create shared event for fence");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_fence = NULL;
+        return;
+    }
+
+    event.signaledValue = initial_value;
+
+    LRHIFenceMetal4* out = malloc(sizeof(LRHIFenceMetal4));
+    out->base.vtable = &lrhi_metal4_fence_vtable;
+    out->event = event;
+    *out_fence = (LRHIFence)out;
+}
+
+static void lrhi_metal4_destroy_fence(LRHIFence fence)
+{
+    free(fence);
+}
+
+static uint64_t lrhi_metal4_fence_get_value(LRHIFence fence)
+{
+    LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
+    return metal_fence->event.signaledValue;
+}
+
+static void lrhi_metal4_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
+    metal_fence->event.signaledValue = value;
+}
+
+static void lrhi_metal4_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
+{
+    LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
+    if (metal_fence->event.signaledValue >= value)
+        return;
+
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    MTLSharedEventListener* listener = [[MTLSharedEventListener alloc] init];
+    [metal_fence->event notifyListener:listener atValue:value block:^(id<MTLSharedEvent> e, uint64_t v) {
+        (void)e;
+        (void)v;
+        dispatch_semaphore_signal(sem);
+    }];
+
+    dispatch_time_t deadline = (timeout_ns == UINT64_MAX)
+        ? DISPATCH_TIME_FOREVER
+        : dispatch_time(DISPATCH_TIME_NOW, (int64_t)timeout_ns);
+
+    if (dispatch_semaphore_wait(sem, deadline) != 0 && out_error) {
+        snprintf(out_error->message, sizeof(out_error->message), "Fence wait timed out");
+        out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
     }
 }
 
