@@ -23,8 +23,6 @@ public:
 
         if (info.device_name[0] == '\0')
             return { false, "device_name is empty" };
-        if (info.backend != LUMINARY_RHI_BACKEND_METAL4)
-            return { false, "unexpected backend" };
         if (info.limits.max_texture_dimension_2d == 0)
             return { false, "max_texture_dimension_2d is 0" };
         if (info.limits.max_texture_dimension_3d == 0)

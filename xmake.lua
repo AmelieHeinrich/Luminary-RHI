@@ -19,7 +19,9 @@ target("luminary_rhi")
     add_headerfiles("src/*.h")
 
     if is_plat("macosx") then
+        add_files("src/luminary_rhi_metal3.m")
         add_files("src/luminary_rhi_metal4.m")
+        add_files("src/luminary_rhi.c")
     end
 
 target("examples")

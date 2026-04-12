@@ -179,10 +179,6 @@ void lrhi_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, 
 
 /*
     TODO:
-        Buffer:
-            - create/destroy
-            - get info
-            - map/unmap
         Command Queue:
             - create/destroy
             - submit command list

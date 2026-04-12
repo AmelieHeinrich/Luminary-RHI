@@ -1,3 +1,4 @@
+#include "luminary_rhi.h"
 #include "test.h"
 
 #include <cstdio>
@@ -5,6 +6,17 @@
 #include <fstream>
 
 #include "json/json.hpp"
+
+std::string backend_to_string(LRHIBackend backend)
+{
+    switch (backend) {
+        case LUMINARY_RHI_BACKEND_VULKAN: return "VULKAN";
+        case LUMINARY_RHI_BACKEND_D3D12: return "D3D12";
+        case LUMINARY_RHI_BACKEND_METAL3: return "METAL3";
+        case LUMINARY_RHI_BACKEND_METAL4: return "METAL4";
+        default: return "UNKNOWN";
+    }
+}
 
 int main(int argc, char** argv)
 {
@@ -20,7 +32,7 @@ int main(int argc, char** argv)
     // Create Metal 4 device
     LRHIError  err    = {};
     LRHIDevice device = nullptr;
-    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL4, &device, 1, &err);
+    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL3, &device, 1, &err);
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
         fprintf(stderr, "Failed to create device: %s\n", err.message);
         return 1;
@@ -31,7 +43,7 @@ int main(int argc, char** argv)
     }
 
     LRHIDeviceInfo dev_info = lrhi_get_device_info(device);
-    printf("Device: %s  Backend: METAL4\n", dev_info.device_name);
+    printf("Device: %s  Backend: %s\n", dev_info.device_name, backend_to_string(dev_info.backend).c_str());
 
     // Collect all self-registered tests
     auto tests = test_registry::create_all();
@@ -39,7 +51,7 @@ int main(int argc, char** argv)
     // Run tests and collect results
     nlohmann::json results_json;
     results_json["device"]    = dev_info.device_name;
-    results_json["backend"]   = "METAL4";
+    results_json["backend"]   = backend_to_string(dev_info.backend);
     results_json["bake_mode"] = bake_mode;
     results_json["tests"]     = nlohmann::json::array();
 
