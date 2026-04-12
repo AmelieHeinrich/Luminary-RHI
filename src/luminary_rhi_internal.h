@@ -15,9 +15,11 @@ typedef struct LRHIDeviceVTable {
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
+    void (*create_command_list)(LRHICommandQueue queue, LRHICommandList* out_command_list, LRHIError* out_error);
     void (*destroy_command_queue)(LRHICommandQueue queue);
     void (*signal_fence)(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
     void (*wait_fence)(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+    void (*submit_command_lists)(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error);
 } LRHICommandQueueVTable;
 
 typedef struct LRHIFenceVTable {
@@ -41,12 +43,20 @@ typedef struct LRHIBufferVTable {
     void  (*buffer_unmap)(LRHIBuffer buffer);
 } LRHIBufferVTable;
 
+typedef struct LRHICommandListVTable {
+    void (*destroy_command_list)(LRHICommandList command_list);
+    void (*command_list_begin)(LRHICommandList command_list, LRHIError* out_error);
+    void (*command_list_end)(LRHICommandList command_list, LRHIError* out_error);
+    void (*command_list_reset)(LRHICommandList command_list, LRHIError* out_error);
+} LRHICommandListVTable;
+
 // Base structs — must be the first member of every backend struct.
 typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*       vtable; } LRHIDeviceBase;
 typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable* vtable; } LRHICommandQueueBase;
 typedef struct LRHIFenceBase        { const LRHIFenceVTable*        vtable; } LRHIFenceBase;
 typedef struct LRHITextureBase      { const LRHITextureVTable*      vtable; } LRHITextureBase;
 typedef struct LRHIBufferBase       { const LRHIBufferVTable*       vtable; } LRHIBufferBase;
+typedef struct LRHICommandListBase  { const LRHICommandListVTable*  vtable; } LRHICommandListBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

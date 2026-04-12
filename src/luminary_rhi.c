@@ -108,6 +108,11 @@ void lrhi_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t v
     ((LRHICommandQueueBase*)queue)->vtable->wait_fence(queue, fence, value, timeout_ns, out_error);
 }
 
+void lrhi_command_queue_submit(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error)
+{
+    ((LRHICommandQueueBase*)queue)->vtable->submit_command_lists(queue, command_lists, command_list_count, signal_fence, signal_value, wait_fence, wait_value, out_error);
+}
+
 void lrhi_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error)
 {
     ((LRHIDeviceBase*)device)->vtable->create_fence(device, initial_value, out_fence, out_error);
@@ -131,4 +136,29 @@ void lrhi_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error)
 void lrhi_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
 {
     ((LRHIFenceBase*)fence)->vtable->wait(fence, value, timeout_ns, out_error);
+}
+
+void lrhi_create_command_list(LRHICommandQueue queue, LRHICommandList* out_command_list, LRHIError* out_error)
+{
+    ((LRHICommandQueueBase*)queue)->vtable->create_command_list(queue, out_command_list, out_error);
+}
+
+void lrhi_destroy_command_list(LRHICommandList command_list)
+{
+    ((LRHICommandListBase*)command_list)->vtable->destroy_command_list(command_list);
+}
+
+void lrhi_command_list_begin(LRHICommandList command_list, LRHIError* out_error)
+{
+    ((LRHICommandListBase*)command_list)->vtable->command_list_begin(command_list, out_error);
+}
+
+void lrhi_command_list_end(LRHICommandList command_list, LRHIError* out_error)
+{
+    ((LRHICommandListBase*)command_list)->vtable->command_list_end(command_list, out_error);
+}
+
+void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error)
+{
+    ((LRHICommandListBase*)command_list)->vtable->command_list_reset(command_list, out_error);
 }

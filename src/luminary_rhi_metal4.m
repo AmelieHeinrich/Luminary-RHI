@@ -32,6 +32,12 @@ typedef struct LRHIFenceMetal4 {
     id<MTLSharedEvent> event;
 } LRHIFenceMetal4;
 
+typedef struct LRHICommandListMetal4 {
+    LRHICommandListBase base;
+    id<MTL4CommandBuffer> command_buffer;
+    id<MTL4CommandAllocator> command_allocator;
+} LRHICommandListMetal4;
+
 // Forward declarations
 static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage lrhi_metal4_texture_usage(LRHITextureUsage usage);
@@ -57,12 +63,19 @@ static void            lrhi_metal4_create_command_queue(LRHIDevice device, LRHIC
 static void            lrhi_metal4_destroy_command_queue(LRHICommandQueue queue);
 static void            lrhi_metal4_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
 static void            lrhi_metal4_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+static void            lrhi_metal4_command_queue_submit(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error);
 
 static void            lrhi_metal4_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
 static void            lrhi_metal4_destroy_fence(LRHIFence fence);
 static uint64_t        lrhi_metal4_fence_get_value(LRHIFence fence);
 static void            lrhi_metal4_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error);
 static void            lrhi_metal4_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+
+static void            lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandList* out_command_list, LRHIError* out_error);
+static void            lrhi_metal4_destroy_command_list(LRHICommandList command_list);
+static void            lrhi_metal4_command_list_begin(LRHICommandList command_list, LRHIError* out_error);
+static void            lrhi_metal4_command_list_end(LRHICommandList command_list, LRHIError* out_error);
+static void            lrhi_metal4_command_list_reset(LRHICommandList command_list, LRHIError* out_error);
 
 // Vtable instances
 
@@ -78,9 +91,11 @@ static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
 };
 
 static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
+    .create_command_list   = lrhi_metal4_create_command_list,
     .destroy_command_queue = lrhi_metal4_destroy_command_queue,
     .signal_fence          = lrhi_metal4_command_queue_signal,
     .wait_fence            = lrhi_metal4_command_queue_wait,
+    .submit_command_lists  = lrhi_metal4_command_queue_submit,
 };
 
 static const LRHIFenceVTable lrhi_metal4_fence_vtable = {
@@ -102,6 +117,13 @@ static const LRHIBufferVTable lrhi_metal4_buffer_vtable = {
     .get_buffer_info = lrhi_metal4_get_buffer_info,
     .buffer_map      = lrhi_metal4_buffer_map,
     .buffer_unmap    = lrhi_metal4_buffer_unmap,
+};
+
+static const LRHICommandListVTable lrhi_metal4_command_list_vtable = {
+    .destroy_command_list = lrhi_metal4_destroy_command_list,
+    .command_list_begin   = lrhi_metal4_command_list_begin,
+    .command_list_end     = lrhi_metal4_command_list_end,
+    .command_list_reset   = lrhi_metal4_command_list_reset,
 };
 
 // Device
@@ -286,7 +308,7 @@ static void lrhi_metal4_buffer_readback(LRHIDevice device, LRHIBuffer buffer, vo
 static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
 {
     LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
-    id<MTLCommandQueue> base_queue = [metal_device->device newCommandQueue];
+    id<MTL4CommandQueue> base_queue = [metal_device->device newMTL4CommandQueue];
     if (!base_queue) {
         if (out_error) {
             snprintf(out_error->message, sizeof(out_error->message), "Failed to create command queue");
@@ -298,7 +320,7 @@ static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue
 
     LRHICommandQueueMetal4* out = malloc(sizeof(LRHICommandQueueMetal4));
     out->base.vtable = &lrhi_metal4_command_queue_vtable;
-    out->queue = (id<MTL4CommandQueue>)base_queue;
+    out->queue = base_queue;
     out->device = metal_device->device;
     *out_queue = (LRHICommandQueue)out;
 }
@@ -313,7 +335,7 @@ static void lrhi_metal4_command_queue_signal(LRHICommandQueue queue, LRHIFence f
     (void)out_error;
     LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
     LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
-    [metal_queue->queue signalEvent:metal_fence->event value:value];
+    [metal_queue->queue signalEvent:metal_fence->event value:(uint64_t)value];
 }
 
 static void lrhi_metal4_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
@@ -323,6 +345,30 @@ static void lrhi_metal4_command_queue_wait(LRHICommandQueue queue, LRHIFence fen
     LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
     LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
     [metal_queue->queue waitForEvent:metal_fence->event value:value];
+}
+
+static void lrhi_metal4_command_queue_submit(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+
+    // Wait on the fence before executing command lists
+    if (wait_fence) {
+        LRHIFenceMetal4* metal_wait_fence = (LRHIFenceMetal4*)wait_fence;
+        [metal_queue->queue waitForEvent:metal_wait_fence->event value:wait_value];
+    }
+
+    // Execute command lists
+    for (uint32_t i = 0; i < command_list_count; i++) {
+        LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_lists[i];
+        [metal_queue->queue commit:&metal_cmd_list->command_buffer count:1];
+    }
+
+    // Signal the fence after executing command lists
+    if (signal_fence) {
+        LRHIFenceMetal4* metal_signal_fence = (LRHIFenceMetal4*)signal_fence;
+        [metal_queue->queue signalEvent:metal_signal_fence->event value:signal_value];
+    }
 }
 
 static void lrhi_metal4_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error)
@@ -386,6 +432,65 @@ static void lrhi_metal4_fence_wait(LRHIFence fence, uint64_t value, uint64_t tim
         snprintf(out_error->message, sizeof(out_error->message), "Fence wait timed out");
         out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
     }
+}
+
+// Command lists
+
+static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandList* out_command_list, LRHIError* out_error)
+{
+    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+    id<MTL4CommandAllocator> command_allocator = [metal_queue->device newCommandAllocator];
+    if (!command_allocator) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create command allocator");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_command_list = NULL;
+        return;
+    }
+
+    // Should be create by command queue. Copilot: fix this :)
+    id<MTL4CommandBuffer> command_buffer = [metal_queue->device newCommandBuffer];
+    if (!command_buffer) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create command buffer");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_command_list = NULL;
+        return;
+    }
+
+    LRHICommandListMetal4* out = malloc(sizeof(LRHICommandListMetal4));
+    out->base.vtable = &lrhi_metal4_command_list_vtable;
+    out->command_allocator = command_allocator;
+    out->command_buffer = command_buffer;
+    *out_command_list = (LRHICommandList)out;
+}
+
+static void lrhi_metal4_destroy_command_list(LRHICommandList command_list)
+{
+    free(command_list);
+}
+
+static void lrhi_metal4_command_list_begin(LRHICommandList command_list, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_list;
+    [metal_cmd_list->command_buffer beginCommandBufferWithAllocator:metal_cmd_list->command_allocator];
+}
+
+static void lrhi_metal4_command_list_end(LRHICommandList command_list, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_list;
+    [metal_cmd_list->command_buffer endCommandBuffer];
+}
+
+static void lrhi_metal4_command_list_reset(LRHICommandList command_list, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_list;
+    [metal_cmd_list->command_allocator reset];
 }
 
 // Utils

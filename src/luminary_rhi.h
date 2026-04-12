@@ -180,18 +180,23 @@ void lrhi_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, 
 // Command Queue functions
 void lrhi_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
 void lrhi_destroy_command_queue(LRHICommandQueue queue);
-/// Enqueues a GPU-side signal: the queue will set the fence to value after all previously submitted work completes.
 void lrhi_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
-/// Enqueues a GPU-side wait: the queue will stall until the fence reaches value before starting subsequent work.
-/// On Metal 3 this blocks the CPU submission thread (no native GPU-side queue wait available).
 void lrhi_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+void lrhi_command_queue_submit(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error);
 
 // Fence functions
-void     lrhi_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
-void     lrhi_destroy_fence(LRHIFence fence);
+void lrhi_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
+void lrhi_destroy_fence(LRHIFence fence);
 uint64_t lrhi_fence_get_value(LRHIFence fence);
-void     lrhi_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error);
-void     lrhi_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+void lrhi_fence_signal(LRHIFence fence, uint64_t value, LRHIError* out_error);
+void lrhi_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
+
+// Command list functions
+void lrhi_create_command_list(LRHICommandQueue queue, LRHICommandList* out_command_list, LRHIError* out_error);
+void lrhi_destroy_command_list(LRHICommandList command_list);
+void lrhi_command_list_begin(LRHICommandList command_list, LRHIError* out_error);
+void lrhi_command_list_end(LRHICommandList command_list, LRHIError* out_error);
+void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error);
 
 /*
     TODO:
