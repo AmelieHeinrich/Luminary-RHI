@@ -6,14 +6,26 @@ class submit_empty_command_buffer_test;
 class replace_texture_region_test;
 class replace_buffer_region_test;
 
-/*
-    TODO:
-        - buffer->buffer copy full 
-        - buffer->buffer copy partial
-        - buffer->texture copy full
-        - buffer->texture copy partial
-        - texture->buffer copy full
-        - texture->buffer copy partial
-        - texture->texture copy full
-        - texture->texture copy partial
-*/
+// copy_buffer_to_buffer
+class copy_buffer_to_buffer_full_test;
+class copy_buffer_to_buffer_offset_test;
+
+// copy_texture_to_texture
+class copy_texture_to_texture_full_test;
+class copy_texture_to_texture_region_test;
+class copy_texture_to_texture_dst_mip_test;
+class copy_texture_to_texture_dst_face_test;
+class copy_texture_to_texture_dst_layer_test;
+class copy_texture_to_texture_src_mip_test;
+class copy_texture_to_texture_src_face_test;
+class copy_texture_to_texture_src_layer_test;
+
+// copy_texture_to_buffer
+class copy_texture_to_buffer_src_mip_test;
+class copy_texture_to_buffer_src_face_test;
+class copy_texture_to_buffer_src_layer_test;
+
+// copy_buffer_to_texture
+class copy_buffer_to_texture_dst_mip_test;
+class copy_buffer_to_texture_dst_face_test;
+class copy_buffer_to_texture_dst_layer_test;

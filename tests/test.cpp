@@ -44,19 +44,22 @@ static void ensure_parent_dirs(const char* path)
 // test_tools implementations
 // ---------------------------------------------------------------------------
 
-void test_tools::rhi_readback_texture(LRHIDevice device, LRHITexture texture, std::vector<uint8_t>& out_data)
+void test_tools::rhi_readback_texture(LRHIDevice device, LRHITexture texture, std::vector<uint8_t>& out_data,
+                                      uint32_t mip_level, uint32_t array_layer)
 {
     LRHITextureInfo info;
     lrhi_get_texture_info(texture, &info);
 
+    uint32_t mip_w         = (info.width  >> mip_level) > 0 ? (info.width  >> mip_level) : 1;
+    uint32_t mip_h         = (info.height >> mip_level) > 0 ? (info.height >> mip_level) : 1;
     uint32_t bpp           = format_bpp(info.format);
-    uint32_t bytes_per_row = info.width * bpp;
-    uint32_t total_size    = bytes_per_row * info.height;
+    uint32_t bytes_per_row = mip_w * bpp;
+    uint32_t total_size    = bytes_per_row * mip_h;
     out_data.resize(total_size);
 
-    LRHIRegion region = { 0, 0, 0, info.width, info.height, 1 };
+    LRHIRegion region = { 0, 0, 0, mip_w, mip_h, 1 };
     LRHIError err     = {};
-    lrhi_texture_readback(device, texture, &region, 0, 0,
+    lrhi_texture_readback(device, texture, &region, mip_level, array_layer,
                           out_data.data(), total_size, bytes_per_row, 0, &err);
 
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR)
@@ -169,11 +172,14 @@ bool test_tools::validate_buffer(const char* reference_path, const std::vector<u
     return memcmp(ref.data(), data.data(), (size_t)size) == 0;
 }
 
-void test_tools::save_texture(const char* output_path, const std::vector<uint8_t>& data, const LRHITextureInfo& info)
+void test_tools::save_texture(const char* output_path, const std::vector<uint8_t>& data,
+                              const LRHITextureInfo& info, uint32_t mip_level)
 {
     ensure_parent_dirs(output_path);
-    uint32_t bytes_per_row = info.width * format_bpp(info.format);
-    stbi_write_png(output_path, (int)info.width, (int)info.height, 4,
+    uint32_t mip_w         = (info.width  >> mip_level) > 0 ? (info.width  >> mip_level) : 1;
+    uint32_t mip_h         = (info.height >> mip_level) > 0 ? (info.height >> mip_level) : 1;
+    uint32_t bytes_per_row = mip_w * format_bpp(info.format);
+    stbi_write_png(output_path, (int)mip_w, (int)mip_h, 4,
                    data.data(), (int)bytes_per_row);
 }
 

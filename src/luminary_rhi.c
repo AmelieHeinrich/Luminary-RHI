@@ -162,3 +162,33 @@ void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error)
 {
     ((LRHICommandListBase*)command_list)->vtable->command_list_reset(command_list, out_error);
 }
+
+LRHICopyPass lrhi_copy_pass_begin(LRHICommandList command_list, LRHIError* out_error)
+{
+    return ((LRHICommandListBase*)command_list)->vtable->copy_pass_begin(command_list, out_error);;
+}
+
+void lrhi_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->copy_pass_end(copy_pass, out_error);
+}
+
+void lrhi_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->copy_buffer_to_buffer(copy_pass, src_buffer, src_offset, dst_buffer, dst_offset, size, out_error);
+}
+
+void lrhi_copy_pass_copy_buffer_to_texture(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->copy_buffer_to_texture(copy_pass, src_buffer, src_offset, src_bytes_per_row, src_bytes_per_image, dst_texture, dst_region, dst_mip_level, dst_array_layer, out_error);
+}
+
+void lrhi_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHIBuffer dst_buffer, uint64_t dst_offset, uint32_t dst_bytes_per_row, uint32_t dst_bytes_per_image, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->copy_texture_to_buffer(copy_pass, src_texture, src_region, src_mip_level, src_array_layer, dst_buffer, dst_offset, dst_bytes_per_row, dst_bytes_per_image, out_error);
+}
+
+void lrhi_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->copy_texture_to_texture(copy_pass, src_texture, src_region, src_mip_level, src_array_layer, dst_texture, dst_region, dst_mip_level, dst_array_layer, out_error);
+}

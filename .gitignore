@@ -5,3 +5,5 @@ compile_commands.json
 
 results.json
 tests/output
+*.xcodeproj
+*.swift

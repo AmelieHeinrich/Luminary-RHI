@@ -74,6 +74,7 @@ typedef enum LRHIBufferUsage {
     LUMINARY_RHI_BUFFER_USAGE_SHADER_READ = 1 << 3,
     LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE = 1 << 4,
     LUMINARY_RHI_BUFFER_USAGE_INDIRECT_COMMANDS = 1 << 5,
+    LUMINARY_RHI_BUFFER_USAGE_STAGING = 1 << 6
 } LRHIBufferUsage;
 
 // Types
@@ -198,6 +199,14 @@ void lrhi_command_list_begin(LRHICommandList command_list, LRHIError* out_error)
 void lrhi_command_list_end(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error);
 
+// Copy pass functions
+LRHICopyPass lrhi_copy_pass_begin(LRHICommandList command_list, LRHIError* out_error);
+void lrhi_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
+void lrhi_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error);
+void lrhi_copy_pass_copy_buffer_to_texture(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
+void lrhi_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHIBuffer dst_buffer, uint64_t dst_offset, uint32_t dst_bytes_per_row, uint32_t dst_bytes_per_image, LRHIError* out_error);
+void lrhi_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
+
 /*
     TODO:
         Swap Chain:
@@ -216,6 +225,9 @@ void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error)
         Mesh Pipeline:
             - create/destroy
             - get info
+        Descriptor heap:
+            - allocate
+            - free
         Render Pass:
             - create/destroy
             - get info
@@ -244,14 +256,6 @@ void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error)
             - create/destroy
             - get info
             - reflect shader resources (buffers, textures, samplers)
-        Copy Pass:
-            - create/destroy
-            - get info
-            - begin/end
-            - copy buffer to buffer
-            - copy buffer to texture
-            - copy texture to buffer
-            - copy texture to texture
         Acceleration structure:
             - create/destroy
             - get info

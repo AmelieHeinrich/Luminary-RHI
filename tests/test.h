@@ -81,8 +81,9 @@ struct test_registry
 
 struct test_tools
 {
-    // Read back the full mip 0 / layer 0 of a GPU texture into a byte vector.
-    static void rhi_readback_texture(LRHIDevice device, LRHITexture texture, std::vector<uint8_t>& out_data);
+    // Read back the specified mip/layer of a GPU texture into a byte vector.
+    static void rhi_readback_texture(LRHIDevice device, LRHITexture texture, std::vector<uint8_t>& out_data,
+                                     uint32_t mip_level = 0, uint32_t array_layer = 0);
 
     // Stub: buffer API not yet implemented.
     static void rhi_readback_buffer(LRHIDevice device, LRHIBuffer buffer, std::vector<uint8_t>& out_data);
@@ -98,8 +99,9 @@ struct test_tools
     // Binary comparison of buffer data against a reference file.
     static bool validate_buffer(const char* reference_path, const std::vector<uint8_t>& data);
 
-    // Save RGBA8 texture data as PNG.
-    static void save_texture(const char* output_path, const std::vector<uint8_t>& data, const LRHITextureInfo& info);
+    // Save RGBA8 texture data as PNG. mip_level is used to compute the correct mip-adjusted dimensions.
+    static void save_texture(const char* output_path, const std::vector<uint8_t>& data,
+                             const LRHITextureInfo& info, uint32_t mip_level = 0);
 
     // Save raw buffer bytes to disk.
     static void save_buffer(const char* output_path, const std::vector<uint8_t>& data);

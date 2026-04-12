@@ -38,6 +38,11 @@ typedef struct LRHICommandListMetal4 {
     id<MTL4CommandAllocator> command_allocator;
 } LRHICommandListMetal4;
 
+typedef struct LRHICopyPassMetal4 {
+    LRHICopyPassBase base;
+    id<MTL4ComputeCommandEncoder> blit_encoder;
+} LRHICopyPassMetal4;
+
 // Forward declarations
 static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage lrhi_metal4_texture_usage(LRHITextureUsage usage);
@@ -76,6 +81,13 @@ static void            lrhi_metal4_destroy_command_list(LRHICommandList command_
 static void            lrhi_metal4_command_list_begin(LRHICommandList command_list, LRHIError* out_error);
 static void            lrhi_metal4_command_list_end(LRHICommandList command_list, LRHIError* out_error);
 static void            lrhi_metal4_command_list_reset(LRHICommandList command_list, LRHIError* out_error);
+static LRHICopyPass    lrhi_metal4_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error);
+
+static void            lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_copy_buffer_to_texture(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHIBuffer dst_buffer, uint64_t dst_offset, uint32_t dst_bytes_per_row, uint32_t dst_bytes_per_image, LRHIError* out_error);
 
 // Vtable instances
 
@@ -124,6 +136,15 @@ static const LRHICommandListVTable lrhi_metal4_command_list_vtable = {
     .command_list_begin   = lrhi_metal4_command_list_begin,
     .command_list_end     = lrhi_metal4_command_list_end,
     .command_list_reset   = lrhi_metal4_command_list_reset,
+    .copy_pass_begin       = lrhi_metal4_command_list_begin_copy_pass,
+};
+
+static const LRHICopyPassVTable lrhi_metal4_copy_pass_vtable = {
+    .copy_pass_end = lrhi_metal4_copy_pass_end,
+    .copy_texture_to_texture = lrhi_metal4_copy_pass_copy_texture_to_texture,
+    .copy_buffer_to_buffer = lrhi_metal4_copy_pass_copy_buffer_to_buffer,
+    .copy_buffer_to_texture = lrhi_metal4_copy_pass_copy_buffer_to_texture,
+    .copy_texture_to_buffer = lrhi_metal4_copy_pass_copy_texture_to_buffer,
 };
 
 // Device
@@ -413,22 +434,9 @@ static void lrhi_metal4_fence_signal(LRHIFence fence, uint64_t value, LRHIError*
 static void lrhi_metal4_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
 {
     LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
-    if (metal_fence->event.signaledValue >= value)
-        return;
-
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    MTLSharedEventListener* listener = [[MTLSharedEventListener alloc] init];
-    [metal_fence->event notifyListener:listener atValue:value block:^(id<MTLSharedEvent> e, uint64_t v) {
-        (void)e;
-        (void)v;
-        dispatch_semaphore_signal(sem);
-    }];
-
-    dispatch_time_t deadline = (timeout_ns == UINT64_MAX)
-        ? DISPATCH_TIME_FOREVER
-        : dispatch_time(DISPATCH_TIME_NOW, (int64_t)timeout_ns);
-
-    if (dispatch_semaphore_wait(sem, deadline) != 0 && out_error) {
+    uint32_t timeout_ms = (timeout_ns == UINT64_MAX) ? UINT32_MAX : (uint32_t)(timeout_ns / 1000000);
+    BOOL signaled = [metal_fence->event waitUntilSignaledValue:value timeoutMS:timeout_ms];
+    if (!signaled && out_error) {
         snprintf(out_error->message, sizeof(out_error->message), "Fence wait timed out");
         out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
     }
@@ -449,7 +457,6 @@ static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandL
         return;
     }
 
-    // Should be create by command queue. Copilot: fix this :)
     id<MTL4CommandBuffer> command_buffer = [metal_queue->device newCommandBuffer];
     if (!command_buffer) {
         if (out_error) {
@@ -491,6 +498,80 @@ static void lrhi_metal4_command_list_reset(LRHICommandList command_list, LRHIErr
     (void)out_error;
     LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_list;
     [metal_cmd_list->command_allocator reset];
+}
+
+static LRHICopyPass lrhi_metal4_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_list;
+    id<MTL4ComputeCommandEncoder> blit_encoder = [metal_cmd_list->command_buffer computeCommandEncoder];
+    if (!blit_encoder) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create blit command encoder for copy pass");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return NULL;
+    }
+
+    LRHICopyPassMetal4* copy_pass = malloc(sizeof(LRHICopyPassMetal4));
+    copy_pass->base.vtable = &lrhi_metal4_copy_pass_vtable;
+    copy_pass->blit_encoder = blit_encoder;
+    return (LRHICopyPass)copy_pass;
+}
+
+// Copy pass
+
+static void lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error)
+{
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    [metal_copy_pass->blit_encoder endEncoding];
+    free(metal_copy_pass);
+}
+
+static void lrhi_metal4_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error)
+{
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    LRHITextureMetal4* metal_src_texture = (LRHITextureMetal4*)src_texture;
+    LRHITextureMetal4* metal_dst_texture = (LRHITextureMetal4*)dst_texture;
+
+    MTLOrigin src_origin = MTLOriginMake(src_region.x, src_region.y, src_region.z);
+    MTLSize src_size = MTLSizeMake(src_region.width, src_region.height, src_region.depth);
+    MTLOrigin dst_origin = MTLOriginMake(dst_region.x, dst_region.y, dst_region.z);
+
+    [metal_copy_pass->blit_encoder copyFromTexture:metal_src_texture->texture sourceSlice:src_array_layer sourceLevel:src_mip_level sourceOrigin:src_origin sourceSize:src_size toTexture:metal_dst_texture->texture destinationSlice:dst_array_layer destinationLevel:dst_mip_level destinationOrigin:dst_origin];
+}
+
+static void lrhi_metal4_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error)
+{
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    LRHIBufferMetal4* metal_src_buffer = (LRHIBufferMetal4*)src_buffer;
+    LRHIBufferMetal4* metal_dst_buffer = (LRHIBufferMetal4*)dst_buffer;
+
+    [metal_copy_pass->blit_encoder copyFromBuffer:metal_src_buffer->buffer sourceOffset:src_offset toBuffer:metal_dst_buffer->buffer destinationOffset:dst_offset size:size];
+}
+
+static void lrhi_metal4_copy_pass_copy_buffer_to_texture(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error)
+{
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    LRHIBufferMetal4* metal_src_buffer = (LRHIBufferMetal4*)src_buffer;
+    LRHITextureMetal4* metal_dst_texture = (LRHITextureMetal4*)dst_texture;
+
+    MTLOrigin dst_origin = MTLOriginMake(dst_region.x, dst_region.y, dst_region.z);
+    MTLSize dst_size = MTLSizeMake(dst_region.width, dst_region.height, dst_region.depth);
+
+    [metal_copy_pass->blit_encoder copyFromBuffer:metal_src_buffer->buffer sourceOffset:src_offset sourceBytesPerRow:src_bytes_per_row sourceBytesPerImage:src_bytes_per_image sourceSize:dst_size toTexture:metal_dst_texture->texture destinationSlice:dst_array_layer destinationLevel:dst_mip_level destinationOrigin:dst_origin];
+}
+
+static void lrhi_metal4_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHIBuffer dst_buffer, uint64_t dst_offset, uint32_t dst_bytes_per_row, uint32_t dst_bytes_per_image, LRHIError* out_error)
+{
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    LRHITextureMetal4* metal_src_texture = (LRHITextureMetal4*)src_texture;
+    LRHIBufferMetal4* metal_dst_buffer = (LRHIBufferMetal4*)dst_buffer;
+
+    MTLOrigin src_origin = MTLOriginMake(src_region.x, src_region.y, src_region.z);
+    MTLSize src_size = MTLSizeMake(src_region.width, src_region.height, src_region.depth);
+
+    [metal_copy_pass->blit_encoder copyFromTexture:metal_src_texture->texture sourceSlice:src_array_layer sourceLevel:src_mip_level sourceOrigin:src_origin sourceSize:src_size toBuffer:metal_dst_buffer->buffer destinationOffset:dst_offset destinationBytesPerRow:dst_bytes_per_row destinationBytesPerImage:dst_bytes_per_image];
 }
 
 // Utils
