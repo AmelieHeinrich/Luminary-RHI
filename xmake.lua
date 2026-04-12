@@ -1,6 +1,6 @@
 add_rules("mode.debug", "mode.release", "mode.releasedbg")
 
-set_languages("c99")
+set_languages("c99", "c++17")
 set_rundir(".")
 add_includedirs("src")
 

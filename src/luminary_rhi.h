@@ -38,12 +38,14 @@ LUMINARY_OPAQUE_TYPE(LRHIFence);
 LUMINARY_OPAQUE_TYPE(LRHIBuffer);
 LUMINARY_OPAQUE_TYPE(LRHITexture);
 LUMINARY_OPAQUE_TYPE(LRHISampler);
+LUMINARY_OPAQUE_TYPE(LRHIAccelerationStructure);
 LUMINARY_OPAQUE_TYPE(LRHIGraphicsPipeline);
 LUMINARY_OPAQUE_TYPE(LRHIComputePipeline);
 LUMINARY_OPAQUE_TYPE(LRHIMeshPipeline);
 LUMINARY_OPAQUE_TYPE(LRHIRenderPass);
 LUMINARY_OPAQUE_TYPE(LRHIComputePass);
 LUMINARY_OPAQUE_TYPE(LRHICopyPass);
+LUMINARY_OPAQUE_TYPE(LRHIAccelerationStructurePass);
 LUMINARY_OPAQUE_TYPE(LRHIShaderModule);
 
 /// Structs
@@ -74,6 +76,7 @@ typedef struct LRHIDeviceInfo {
 } LRHIDeviceInfo;
 
 typedef enum LRHITextureFormat {
+    LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED,
     LUMINARY_RHI_TEXTURE_FORMAT_R8G8B8A8_UNORM,
     LUMINARY_RHI_TEXTURE_FORMAT_R8G8B8A8_SRGB,
     LUMINARY_RHI_TEXTURE_FORMAT_B8G8R8A8_UNORM,
@@ -214,6 +217,19 @@ void lrhi_texture_read_region(LRHITexture texture, LRHIRegion* region, uint32_t 
             - copy buffer to texture
             - copy texture to buffer
             - copy texture to texture
+        Acceleration structure:
+            - create/destroy
+            - get info
+            - top level
+            - bottom level
+        Acceleration structure pass:
+            - create/destroy
+            - get info
+            - begin/end
+            - build (direct)
+            - build (indirect), metal only
+            - copy
+            - compact
 */
 
 #endif

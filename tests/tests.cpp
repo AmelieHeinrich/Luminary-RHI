@@ -60,4 +60,25 @@
         - invalid buffer descriptor
         - invalid pipeline descriptor
         - buffer write
+        - ray tracing simple
+        - ray tracing multiple tlas instances
+        - ray tracing multiple blas geometries
+        - ray tracing alpha testing
+        - ray tracing tlas transform
+        - ray tracing procedural geometry
+        - ray tracing barycentrics
+        - ray tracing user ID
+        - compacted blas
+        - copied blas
+        - build blas
+        - build tlas
+        - update blas
+        - update tlas
+        - skinned blas
+        - gizmo axes validation
 */
+
+int main(void)
+{
+    return 0;
+}
