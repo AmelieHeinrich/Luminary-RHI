@@ -1,0 +1,63 @@
+/*
+    TODO:
+        - clear color
+        - triangle (hardcoded vertices in shader)
+        - triangle (vertex buffer)
+        - triangle (index buffer)
+        - triangle (mesh shading)
+        - triangle (ray query)
+        - triangle (vertex pulling)
+        - compute dispatch
+        - buffer-buffer copy
+        - texture-texture copy
+        - buffer-texture copy
+        - texture-buffer copy
+        - error handling test (invalid parameters, out of memory, etc)
+        - intra pass barrier
+        - consumer barrier
+        - fragment discard
+        - metal only textured triangle
+        - bindless textured triangle
+        - depth testing
+        - draw lines
+        - draw lines indexed
+        - draw points
+        - viewports
+        - scissors
+        - draw indexed u16
+        - draw triangles alpha blended
+        - draw (fill mode wireframe)
+        - srgb textures
+        - mipmapping
+        - draw specific mip level
+        - draw specific array layer
+        - draw specific face
+        - texture load (regular format)
+        - texture load (compressed format)
+        - hdr texture load
+        - cubemap rendering
+        - cubemap upload faces
+        - cubemap convolution
+        - shader atomics
+        - waveops
+        - indirect draw
+        - indirect draw indexed
+        - indirect dispatch
+        - indirect draw mesh tasks
+        - sampler states (point, linear, anisotropic)
+        - sampler states (addressing modes)
+        - push constants
+        - triangle winding
+        - triangle culling
+        - render pass load/store ops
+        - buffer offset binding
+        - multiple render targets
+        - render to cubemap face
+        - render to mip level
+        - depth read as texture
+        - timestamp queries
+        - invalid texture descriptor
+        - invalid buffer descriptor
+        - invalid pipeline descriptor
+        - buffer write
+*/
