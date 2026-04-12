@@ -29,6 +29,53 @@ typedef enum LRHISwapChainHandleType {
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_WAYLAND
 } LRHISwapChainHandleType;
 
+typedef enum LRHITextureFormat {
+    LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED,
+    LUMINARY_RHI_TEXTURE_FORMAT_R8G8B8A8_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_R8G8B8A8_SRGB,
+    LUMINARY_RHI_TEXTURE_FORMAT_B8G8R8A8_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_R16G16B16A16_FLOAT,
+    LUMINARY_RHI_TEXTURE_FORMAT_R32G32B32A32_FLOAT,
+    LUMINARY_RHI_TEXTURE_FORMAT_D24_UNORM_S8_UINT,
+    LUMINARY_RHI_TEXTURE_FORMAT_D32_FLOAT_S8_UINT,
+    LUMINARY_RHI_TEXTURE_FORMAT_BC1_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_BC3_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_BC7_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_BC1_SRGB,
+    LUMINARY_RHI_TEXTURE_FORMAT_BC3_SRGB,
+    LUMINARY_RHI_TEXTURE_FORMAT_BC7_SRGB,
+    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_4x4_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_6x6_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_8x8_UNORM,
+    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_4x4_SRGB,
+    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_6x6_SRGB,
+    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_8x8_SRGB,
+} LRHITextureFormat;
+
+typedef enum LRHITextureUsage {
+    LUMINARY_RHI_TEXTURE_USAGE_SAMPLED = 1 << 0,
+    LUMINARY_RHI_TEXTURE_USAGE_STORAGE = 1 << 1,
+    LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET = 1 << 2,
+    LUMINARY_RHI_TEXTURE_USAGE_DEPTH_STENCIL = 1 << 3,
+} LRHITextureUsage;
+
+typedef enum LRHITextureDimensions {
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_1D,
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D,
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY,
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_3D,
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE,
+} LRHITextureDimensions;
+
+typedef enum LRHIBufferUsage {
+    LUMINARY_RHI_BUFFER_USAGE_VERTEX = 1 << 0,
+    LUMINARY_RHI_BUFFER_USAGE_INDEX = 1 << 1,
+    LUMINARY_RHI_BUFFER_USAGE_CONSTANT = 1 << 2,
+    LUMINARY_RHI_BUFFER_USAGE_SHADER_READ = 1 << 3,
+    LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE = 1 << 4,
+    LUMINARY_RHI_BUFFER_USAGE_INDIRECT_COMMANDS = 1 << 5,
+} LRHIBufferUsage;
+
 // Types
 LUMINARY_OPAQUE_TYPE(LRHIDevice);
 LUMINARY_OPAQUE_TYPE(LRHICommandQueue);
@@ -75,44 +122,6 @@ typedef struct LRHIDeviceInfo {
     char device_name[256];
 } LRHIDeviceInfo;
 
-typedef enum LRHITextureFormat {
-    LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED,
-    LUMINARY_RHI_TEXTURE_FORMAT_R8G8B8A8_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_R8G8B8A8_SRGB,
-    LUMINARY_RHI_TEXTURE_FORMAT_B8G8R8A8_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_R16G16B16A16_FLOAT,
-    LUMINARY_RHI_TEXTURE_FORMAT_R32G32B32A32_FLOAT,
-    LUMINARY_RHI_TEXTURE_FORMAT_D24_UNORM_S8_UINT,
-    LUMINARY_RHI_TEXTURE_FORMAT_D32_FLOAT_S8_UINT,
-    LUMINARY_RHI_TEXTURE_FORMAT_BC1_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_BC3_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_BC7_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_BC1_SRGB,
-    LUMINARY_RHI_TEXTURE_FORMAT_BC3_SRGB,
-    LUMINARY_RHI_TEXTURE_FORMAT_BC7_SRGB,
-    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_4x4_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_6x6_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_8x8_UNORM,
-    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_4x4_SRGB,
-    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_6x6_SRGB,
-    LUMINARY_RHI_TEXTURE_FORMAT_ASTC_8x8_SRGB,
-} LRHITextureFormat;
-
-typedef enum LRHITextureUsage {
-    LUMINARY_RHI_TEXTURE_USAGE_SAMPLED = 1 << 0,
-    LUMINARY_RHI_TEXTURE_USAGE_STORAGE = 1 << 1,
-    LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET = 1 << 2,
-    LUMINARY_RHI_TEXTURE_USAGE_DEPTH_STENCIL = 1 << 3,
-} LRHITextureUsage;
-
-typedef enum LRHITextureDimensions {
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_1D,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_3D,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE,
-} LRHITextureDimensions;
-
 typedef struct LRHITextureInfo {
     uint32_t width;
     uint32_t height;
@@ -133,6 +142,16 @@ typedef struct LRHIRegion {
     uint32_t depth;
 } LRHIRegion;
 
+typedef struct LRHIBufferInfo {
+    uint64_t size;
+    uint64_t stride;
+    LRHIBufferUsage usage;
+} LRHIBufferInfo;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /// Device functions
 void lrhi_create_device(LRHIBackend backend, LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
 void lrhi_destroy_device(LRHIDevice device);
@@ -147,14 +166,23 @@ void lrhi_get_texture_info(LRHITexture texture, LRHITextureInfo* out_info);
 void lrhi_texture_replace_region(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
 void lrhi_texture_read_region(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
 
+// Buffer functions
+void lrhi_create_buffer(LRHIDevice device, LRHIBufferInfo* info, LRHIBuffer* out_buffer, LRHIError* out_error);
+void lrhi_destroy_buffer(LRHIBuffer buffer);
+void lrhi_get_buffer_info(LRHIBuffer buffer, LRHIBufferInfo* out_info);
+void* lrhi_buffer_map(LRHIBuffer buffer, LRHIError* out_error);
+void lrhi_buffer_unmap(LRHIBuffer buffer);
+
+// Used by tests to force a texture readback operation without having to worry about synchronization or staging buffers. Not intended for general use.
+void lrhi_texture_readback(LRHIDevice device, LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
+void lrhi_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
+
 /*
     TODO:
         Buffer:
             - create/destroy
             - get info
             - map/unmap
-            - replace region
-            - read region
         Command Queue:
             - create/destroy
             - submit command list
@@ -231,5 +259,9 @@ void lrhi_texture_read_region(LRHITexture texture, LRHIRegion* region, uint32_t 
             - copy
             - compact
 */
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
 
 #endif

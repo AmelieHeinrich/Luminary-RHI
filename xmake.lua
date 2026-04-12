@@ -2,7 +2,7 @@ add_rules("mode.debug", "mode.release", "mode.releasedbg")
 
 set_languages("c99", "c++17")
 set_rundir(".")
-add_includedirs("src")
+add_includedirs("src", ".", { public = true })
 
 if is_plat("windows") then
     add_defines("LRHI_WINDOWS", { public = true })
@@ -25,4 +25,9 @@ target("luminary_rhi")
 target("examples")
     set_kind("binary")
     add_files("examples/*.c")
+    add_deps("luminary_rhi")
+
+target("tests")
+    set_kind("binary")
+    add_files("tests/**.cpp")
     add_deps("luminary_rhi")
