@@ -361,11 +361,11 @@ static void lrhi_metal4_command_queue_signal(LRHICommandQueue queue, LRHIFence f
 
 static void lrhi_metal4_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
 {
-    (void)timeout_ns;
-    (void)out_error;
-    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+    (void)queue;
     LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
-    [metal_queue->queue waitForEvent:metal_fence->event value:value];
+    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+
+    [metal_queue->queue waitForEvent:metal_fence->event value:(uint64_t)value];
 }
 
 static void lrhi_metal4_command_queue_submit(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error)
@@ -428,7 +428,7 @@ static void lrhi_metal4_fence_signal(LRHIFence fence, uint64_t value, LRHIError*
 {
     (void)out_error;
     LRHIFenceMetal4* metal_fence = (LRHIFenceMetal4*)fence;
-    metal_fence->event.signaledValue = value;
+    [metal_fence->event setSignaledValue:value];
 }
 
 static void lrhi_metal4_fence_wait(LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error)
@@ -456,6 +456,7 @@ static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandL
         *out_command_list = NULL;
         return;
     }
+    [command_allocator reset];
 
     id<MTL4CommandBuffer> command_buffer = [metal_queue->device newCommandBuffer];
     if (!command_buffer) {
@@ -523,6 +524,7 @@ static LRHICopyPass lrhi_metal4_command_list_begin_copy_pass(LRHICommandList com
 
 static void lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error)
 {
+    (void)out_error;
     LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
     [metal_copy_pass->blit_encoder endEncoding];
     free(metal_copy_pass);

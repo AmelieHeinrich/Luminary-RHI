@@ -11,6 +11,7 @@ elseif is_plat("linux") then
 elseif is_plat("macosx") then
     add_defines("LRHI_MACOS", { public = true })
     add_cflags("-x objective-c", { public = true })
+    add_cxxflags("-x objective-c++", { public = true })
     add_frameworks("Foundation", "Metal")
 end
 

@@ -59,42 +59,48 @@ int main(int argc, char** argv)
     int total_count  = (int)tests.size();
 
     for (auto& t : tests) {
-        printf("  [%s] %s ... ", bake_mode ? "BAKE" : "RUN ", t->name);
-        fflush(stdout);
+#if __APPLE__
+        @autoreleasepool {
+#else
+        {
+#endif
+            printf("  [%s] %s ... ", bake_mode ? "BAKE" : "RUN ", t->name);
+            fflush(stdout);
 
-        t->init(device);
-        test_result r = t->run(bake_mode);
-        t->cleanup();
+            t->init(device);
+            test_result r = t->run(bake_mode);
+            t->cleanup();
 
-        printf("%s\n", r.passed ? "PASS" : "FAIL");
-        if (!r.message.empty() && r.message != "baked")
-            printf("         %s\n", r.message.c_str());
+            printf("%s\n", r.passed ? "PASS" : "FAIL");
+            if (!r.message.empty() && r.message != "baked")
+                printf("         %s\n", r.message.c_str());
 
-        if (r.passed) passed_count++;
+            if (r.passed) passed_count++;
 
-        const char* type_str = (t->type == test_type::validation) ? "validation"
-                             : (t->type == test_type::texture)    ? "texture"
-                                                                  : "buffer";
+            const char* type_str = (t->type == test_type::validation) ? "validation"
+                                 : (t->type == test_type::texture)    ? "texture"
+                                                                      : "buffer";
 
-        nlohmann::json entry;
-        entry["name"]    = t->name;
-        entry["type"]    = type_str;
-        entry["passed"]  = r.passed;
-        entry["message"] = r.message;
+            nlohmann::json entry;
+            entry["name"]    = t->name;
+            entry["type"]    = type_str;
+            entry["passed"]  = r.passed;
+            entry["message"] = r.message;
 
-        if (t->type == test_type::texture) {
-            entry["flip_mean_error"] = r.flip_mean_error;
-            if (!r.output_image.empty()) entry["output_image"] = r.output_image;
-            if (!r.golden_image.empty()) entry["golden_image"] = r.golden_image;
-            if (!r.flip_image.empty())   entry["flip_image"]   = r.flip_image;
+            if (t->type == test_type::texture) {
+                entry["flip_mean_error"] = r.flip_mean_error;
+                if (!r.output_image.empty()) entry["output_image"] = r.output_image;
+                if (!r.golden_image.empty()) entry["golden_image"] = r.golden_image;
+                if (!r.flip_image.empty())   entry["flip_image"]   = r.flip_image;
+            }
+
+            if (t->type == test_type::buffer) {
+                if (!r.output_buffer.empty()) entry["output_buffer"] = r.output_buffer;
+                if (!r.golden_buffer.empty()) entry["golden_buffer"] = r.golden_buffer;
+            }
+
+            results_json["tests"].push_back(entry);
         }
-
-        if (t->type == test_type::buffer) {
-            if (!r.output_buffer.empty()) entry["output_buffer"] = r.output_buffer;
-            if (!r.golden_buffer.empty()) entry["golden_buffer"] = r.golden_buffer;
-        }
-
-        results_json["tests"].push_back(entry);
     }
 
     printf("\nResults: %d / %d passed\n", passed_count, total_count);

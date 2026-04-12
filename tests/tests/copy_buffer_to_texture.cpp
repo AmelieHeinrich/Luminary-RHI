@@ -58,6 +58,7 @@ static bool cbt_copy_buf_to_tex(LRHIDevice device,
     lrhi_copy_pass_end(cp, nullptr);
     lrhi_command_list_end(cmd, nullptr);
     lrhi_command_queue_submit(queue, &cmd, 1, fence, 1, nullptr, 0, nullptr);
+    lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, nullptr);
     lrhi_fence_wait(fence, 1, 5000000000ULL, nullptr);
 
     lrhi_destroy_command_list(cmd);

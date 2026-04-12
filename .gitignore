@@ -7,3 +7,5 @@ results.json
 tests/output
 *.xcodeproj
 *.swift
+.claude
+diag
