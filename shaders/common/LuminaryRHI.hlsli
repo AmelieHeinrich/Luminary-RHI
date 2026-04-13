@@ -1,7 +1,7 @@
 #ifndef LUMINARY_RHI_HLSLI
 #define LUMINARY_RHI_HLSLI
 
-static const LUMINARY_INVALID_DESCRIPTOR = -1;
+static const int LUMINARY_INVALID_DESCRIPTOR = -1;
 
 #if LUMINARY_METAL
     #define LUMINARY_PUSH_CONSTANTS(type, name) ConstantBuffer<type> name : register(b0)
@@ -159,17 +159,6 @@ class LuminaryRWTexture3D
     }
 };
 
-template<typename T>
-class LuminaryRWTextureCube
-{
-    uint bindless_index;
-
-    RWTextureCube<T> Load()
-    {
-        return ResourceDescriptorHeap[bindless_index];
-    }
-};
-
 class LuminarySampler
 {
     uint bindless_index;
@@ -190,15 +179,13 @@ class LuminaryComparisonSampler
     }
 };
 
-#if LUMINARY_HAS_RAYTRACING
-
 class LuminaryAccelerationStructure
 {
     uint bindless_index;
 
     RaytracingAccelerationStructure Load()
     {
-#if LUMINARY_VULKAN
+#if LUMINARY_VULKAN && LUMINARY_HAS_RAYTRACING
         return __lrhi_as_array[bindless_index];
 #else
         return ResourceDescriptorHeap[bindless_index];
@@ -206,14 +193,14 @@ class LuminaryAccelerationStructure
     }
 };
 
-#endif
-
-struct __luminary_draw_id { uint id };
+struct __luminary_draw_id { uint id; };
 
 #if !LUMINARY_VULKAN
-    #define LUMINARY_DECLARE_DRAW_ID() cbuffer __luminary_draw_id_binding : register(b1) { uint id; }
+    #define LUMINARY_DECLARE_DRAW_ID() ConstantBuffer<__luminary_draw_id> __luminary_draw_id_binding : register(b1)
     #define LUMINARY_DRAW_ID() __luminary_draw_id_binding.id
 #else
     #define LUMINARY_DECLARE_DRAW_ID() [[vk::ext_builtin_input(4426)]] static const uint __luminary_draw_id_var;
     #define LUMINARY_DRAW_ID() __luminary_draw_id_var
 #endif
+
+#endif // LUMINARY_RHI_HLSLI

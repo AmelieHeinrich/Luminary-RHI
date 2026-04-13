@@ -246,6 +246,14 @@ typedef struct LRHIRenderPassInfo {
     uint32_t render_height;
 } LRHIRenderPassInfo;
 
+typedef struct LRHIShaderModuleInfo {
+    LRHIShaderStage stage;
+    const char* entry_point;
+
+    const uint32_t* code;
+    uint32_t code_size;
+} LRHIShaderModuleInfo;
+
 typedef struct LRHIRenderPipelineInfo {
     // Rasterizer
     LRHIPipelineFillMode fill_mode;
@@ -364,6 +372,18 @@ void lrhi_destroy_texture_view(LRHITextureView texture_view);
 void lrhi_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info);
 uint32_t lrhi_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error);
 
+// Shader module
+void lrhi_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
+void lrhi_destroy_shader_module(LRHIShaderModule shader_module);
+void lrhi_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info);
+
+// Render pipeline functions
+void lrhi_create_render_pipeline(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error);
+void lrhi_destroy_render_pipeline(LRHIRenderPipeline pipeline);
+void lrhi_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info);
+uint64_t lrhi_render_pipeline_get_alloc_size(LRHIRenderPipeline pipeline, LRHIError* out_error);
+// TODO: pipeline cache?
+
 // Render pass functions
 LRHIRenderPass lrhi_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
 void lrhi_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
@@ -376,9 +396,6 @@ void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStag
             - Compile
             - Reflect
         Sampler:
-            - create/destroy
-            - get info
-        Graphics Pipeline:
             - create/destroy
             - get info
         Compute Pipeline:

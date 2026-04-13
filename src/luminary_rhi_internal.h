@@ -15,6 +15,7 @@ typedef struct LRHIDeviceVTable {
     void           (*create_residency_set)(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error);
     void           (*create_swap_chain)(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
     void           (*create_texture_view)(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error);
+    void           (*create_shader_module)(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -93,6 +94,11 @@ typedef struct LRHIRenderPassVTable {
     void (*encoder_barrier)(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 } LRHIRenderPassVTable;
 
+typedef struct LRHIShaderModuleVTable {
+    void (*destroy_shader_module)(LRHIShaderModule shader_module);
+    void (*get_shader_module_info)(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info);
+} LRHIShaderModuleVTable;
+
 // Base structs — must be the first member of every backend struct.
 typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*         vtable; } LRHIDeviceBase;
 typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable*   vtable; } LRHICommandQueueBase;
@@ -105,6 +111,7 @@ typedef struct LRHIResidencySetBase { const LRHIResidencySetVTable*   vtable; } 
 typedef struct LRHISwapChainBase    { const LRHISwapChainVTable*      vtable; } LRHISwapChainBase;
 typedef struct LRHITextureViewBase  { const LRHITextureViewVTable*    vtable; } LRHITextureViewBase;
 typedef struct LRHIRenderPassBase   { const LRHIRenderPassVTable*     vtable; } LRHIRenderPassBase;
+typedef struct LRHIShaderModuleBase { const LRHIShaderModuleVTable*   vtable; } LRHIShaderModuleBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

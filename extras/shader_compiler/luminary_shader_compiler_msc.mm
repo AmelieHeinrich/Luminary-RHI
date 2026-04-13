@@ -1,5 +1,6 @@
 #include "luminary_shader_compiler.h"
 
+#include "msc/ir_input_topology.h"
 #include "msc/metal_irconverter.h"
 #include "msc/WinAdapter.h"
 #include "msc/dxcapi.h"
@@ -181,11 +182,39 @@ uint8_t* __luminary_compile_shader_msc(const LuminaryShaderCompilerOptions* opti
         return nullptr;
     }
 
+    // Now do MSC
+    auto module = IRObjectCreateFromDXIL((const uint8_t*)pShaderBlob->GetBufferPointer(), (size_t)pShaderBlob->GetBufferSize(), IRBytecodeOwnershipNone);
+
+    IRCompiler* compiler = IRCompilerCreate();
+    IRCompilerSetEntryPointName(compiler, options->entry_point);
+    IRCompilerSetMinimumDeploymentTarget(compiler, IROperatingSystem_macOS, "16.0");
+    IRCompilerSetGlobalRootSignature(compiler, root_sig);
+    if (options->use_point_topology) {
+        IRCompilerSetInputTopology(compiler, IRInputTopologyPoint);
+    }
+
+    IRError* compileError = nullptr;
+    auto metalIR = IRCompilerAllocCompileAndLink(compiler, options->entry_point, module, &compileError);
+    if (compileError) {
+        auto errorCode = IRErrorGetCode(compileError);
+
+        fprintf(stderr, "Metal IR generation failed with code %u", errorCode);
+        IRErrorDestroy(compileError);
+    }
+
+    IRMetalLibBinary* pMetallib = IRMetalLibBinaryCreate();
+    IRObjectGetMetalLibBinary(metalIR, IRObjectGetMetalIRShaderStage(metalIR), pMetallib);
+    uint64_t bytecodeSize = IRMetalLibGetBytecodeSize(pMetallib);
+
+    uint8_t* result = new uint8_t[bytecodeSize];
+    IRMetalLibGetBytecode(pMetallib, result);
+    *out_bytecode_size = bytecodeSize;
+
+    IRMetalLibBinaryDestroy(pMetallib);
+    IRObjectDestroy(module);
+    IRObjectDestroy(metalIR);
+    IRCompilerDestroy(compiler);
     IRRootSignatureDestroy(root_sig);
     dlclose(dxcLib);
-
-    uint8_t* result = new uint8_t[pShaderBlob->GetBufferSize()];
-    memcpy(result, pShaderBlob->GetBufferPointer(), pShaderBlob->GetBufferSize());
-    *out_bytecode_size = pShaderBlob->GetBufferSize();
     return result;
 }

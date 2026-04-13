@@ -24,6 +24,17 @@
     --radius:    10px;
     --font:      'Inter', 'Segoe UI', system-ui, sans-serif;
     --mono:      'JetBrains Mono', 'Fira Mono', monospace;
+    --grid-min:  240px;
+  }
+
+  :root.light {
+    --bg:        #f9fafb;
+    --surface:   #ffffff;
+    --surface2:  #f3f4f6;
+    --border:    #e5e7eb;
+    --text:      #111827;
+    --text-dim:  #6b7280;
+    --tab-active:#000000;
   }
 
   html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
@@ -36,13 +47,30 @@
     background: var(--surface);
     position: sticky; top: 0; z-index: 100;
   }
-  header h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; color: var(--text); }
-  header .meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 16px; }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; color: var(--text); white-space: nowrap; flex-shrink: 0; }
+  header .meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 16px; flex: 1; }
   header .meta span { display: flex; align-items: center; gap: 5px; }
+
+  header .controls { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+
+  .search-bar {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 12px; border-radius: 6px; font-size: 12px; outline: none; transition: border-color .2s;
+    width: 200px; font-family: inherit;
+  }
+  .search-bar:focus { border-color: var(--accent); }
+
+  .icon-btn {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    width: 28px; height: 28px; border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+    transition: background .2s, border-color .2s; outline: none;
+  }
+  .icon-btn:hover { background: var(--surface); border-color: var(--text-dim); }
+
   header .badge {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
-    margin-left: auto;
   }
   header .badge.pass { background: var(--pass-bg); color: var(--pass); border: 1px solid rgba(34,197,94,.25); }
   header .badge.fail { background: var(--fail-bg); color: var(--fail); border: 1px solid rgba(239,68,68,.25); }
@@ -54,7 +82,7 @@
     padding: 20px 24px; margin-bottom: 28px; font-size: 13px; color: var(--text-dim); line-height: 1.7;
   }
   .notice strong { color: var(--text); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--grid-min), 1fr)); gap: 20px; }
 
   /* ── Card shell ───────────────────────────────────────────────────────── */
   .card {
@@ -155,6 +183,24 @@
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--surface); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Modal */
+  #modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000;
+    display: none; align-items: center; justify-content: center; padding: 40px;
+    backdrop-filter: blur(4px);
+  }
+  #modal-overlay.open { display: flex; }
+  #modal-content {
+    width: 100%; max-width: 900px; max-height: 100%;
+    display: flex; flex-direction: column;
+  }
+  #modal-content .card { flex: 1; border: none; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  :root.light #modal-content .card { box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+  #modal-content .buf-grid { max-height: 50vh; }
+  #modal-content .val-icon { font-size: 64px; }
+  #modal-content .val-status { font-size: 16px; }
+  #modal-content .val-msg { font-size: 14px; }
 </style>
 </head>
 <body>
@@ -162,7 +208,13 @@
 <header>
   <h1>Luminary RHI &mdash; Test Results</h1>
   <div class="meta" id="meta"></div>
-  <div class="badge" id="summary-badge"></div>
+  <div class="controls">
+    <input type="text" id="search" class="search-bar" placeholder="Search tests..." />
+    <button class="icon-btn" id="btn-grid-minus" title="Smaller Grid">-</button>
+    <button class="icon-btn" id="btn-grid-plus" title="Larger Grid">+</button>
+    <button class="icon-btn" id="btn-theme" title="Toggle Theme">◐</button>
+    <div class="badge" id="summary-badge"></div>
+  </div>
 </header>
 
 <main>
@@ -176,6 +228,10 @@
 </main>
 
 <div id="tooltip"></div>
+
+<div id="modal-overlay">
+  <div id="modal-content"></div>
+</div>
 
 <script>
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -432,6 +488,41 @@ function buildBufferCard(t) {
   return card;
 }
 
+// ── Controls & Modal ───────────────────────────────────────────────────────
+
+document.getElementById('search').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  document.querySelectorAll('#grid .card').forEach(c => {
+    c.style.display = c.dataset.name.includes(q) ? 'flex' : 'none';
+  });
+});
+
+const gridSizes = [160, 240, 320, 480, 640];
+let gridIdx = 1;
+document.getElementById('btn-grid-minus').addEventListener('click', () => {
+  if (gridIdx > 0) {
+    gridIdx--;
+    document.documentElement.style.setProperty('--grid-min', gridSizes[gridIdx] + 'px');
+  }
+});
+document.getElementById('btn-grid-plus').addEventListener('click', () => {
+  if (gridIdx < gridSizes.length - 1) {
+    gridIdx++;
+    document.documentElement.style.setProperty('--grid-min', gridSizes[gridIdx] + 'px');
+  }
+});
+
+document.getElementById('btn-theme').addEventListener('click', () => {
+  document.documentElement.classList.toggle('light');
+});
+
+document.getElementById('modal-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'modal-overlay') {
+    e.target.classList.remove('open');
+    document.getElementById('modal-content').innerHTML = '';
+  }
+});
+
 // ── Load and render ────────────────────────────────────────────────────────
 
 async function load() {
@@ -467,6 +558,27 @@ async function load() {
     if      (t.type === 'validation') card = buildValidationCard(t);
     else if (t.type === 'texture')    card = buildTextureCard(t);
     else                              card = buildBufferCard(t);
+
+    card.dataset.name = (t.name || '').toLowerCase();
+    card.style.cursor = 'pointer';
+
+    card.addEventListener('click', (e) => {
+      // Ignore if clicking a button (tabs), a link, or if we are already inside the modal
+      if (card.closest('#modal-content') || e.target.tagName === 'BUTTON' || e.target.closest('.tabs')) return;
+
+      const overlay = document.getElementById('modal-overlay');
+      const content = document.getElementById('modal-content');
+      content.innerHTML = '';
+      
+      let clonedCard;
+      if      (t.type === 'validation') clonedCard = buildValidationCard(t);
+      else if (t.type === 'texture')    clonedCard = buildTextureCard(t);
+      else                              clonedCard = buildBufferCard(t);
+
+      content.appendChild(clonedCard);
+      overlay.classList.add('open');
+    });
+
     grid.appendChild(card);
   });
 }

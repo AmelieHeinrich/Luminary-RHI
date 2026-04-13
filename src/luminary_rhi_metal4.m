@@ -71,6 +71,13 @@ typedef struct LRHIRenderPassMetal4 {
     id<MTL4RenderCommandEncoder> render_encoder;
 } LRHIRenderPassMetal4;
 
+typedef struct LRHIShaderModuleMetal4 {
+    LRHIShaderModuleBase base;
+    LRHIShaderModuleInfo info;
+    id<MTLLibrary> library;
+    id<MTLFunction> function;
+} LRHIShaderModuleMetal4;
+
 // Forward declarations
 static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage lrhi_metal4_texture_usage(LRHITextureUsage usage);
@@ -146,6 +153,10 @@ static void            lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, L
 static void            lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 
+static void            lrhi_metal4_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
+static void            lrhi_metal4_destroy_shader_module(LRHIShaderModule shader_module);
+static void            lrhi_metal4_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
@@ -160,6 +171,7 @@ static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
     .create_residency_set = lrhi_metal4_create_residency_set,
     .create_swap_chain    = lrhi_metal4_create_swap_chain,
     .create_texture_view  = lrhi_metal4_create_texture_view,
+    .create_shader_module = lrhi_metal4_create_shader_module,
 };
 
 static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
@@ -245,6 +257,11 @@ static const LRHIRenderPassVTable lrhi_metal4_render_pass_vtable = {
     .end = lrhi_metal4_render_pass_end,
     .intra_barrier = lrhi_metal4_render_pass_intra_barrier,
     .encoder_barrier = lrhi_metal4_render_pass_encoder_barrier,
+};
+
+static const LRHIShaderModuleVTable lrhi_metal4_shader_module_vtable = {
+    .destroy_shader_module = lrhi_metal4_destroy_shader_module,
+    .get_shader_module_info = lrhi_metal4_get_shader_module_info,
 };
 
 // Device
@@ -915,6 +932,45 @@ static void lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, 
 {
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
     [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(beforeStage) beforeStages:lrhi_metal4_render_stage_to_mtl(afterStage) visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
+// Shader module
+
+static void lrhi_metal4_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error)
+{
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
+
+    NSError* error = nil;
+    dispatch_data_t shader_data = dispatch_data_create(info->code, info->code_size, dispatch_get_main_queue(), NULL);
+    id<MTLLibrary> library = [metal_device->device newLibraryWithData:shader_data error:&error];
+    id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:info->entry_point]];
+
+    if (!library || !function || error) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create shader module: %s", [[error localizedDescription] UTF8String]);
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_shader_module = NULL;
+        return;
+    }
+
+    LRHIShaderModuleMetal4* out = malloc(sizeof(LRHIShaderModuleMetal4));
+    out->base.vtable = &lrhi_metal4_shader_module_vtable;
+    out->library = library;
+    out->function = function;
+    out->info = *info;
+    *out_shader_module = (LRHIShaderModule)out;
+}
+
+static void lrhi_metal4_destroy_shader_module(LRHIShaderModule shader_module)
+{
+    free(shader_module);
+}
+
+static void lrhi_metal4_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info)
+{
+    LRHIShaderModuleMetal4* metal_shader_module = (LRHIShaderModuleMetal4*)shader_module;
+    *out_info = metal_shader_module->info;
 }
 
 // Utils

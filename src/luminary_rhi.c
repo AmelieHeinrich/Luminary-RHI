@@ -302,3 +302,18 @@ void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStag
 {
     ((LRHIRenderPassBase*)render_pass)->vtable->encoder_barrier(render_pass, beforeStage, afterStage, out_error);
 }
+
+void lrhi_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_shader_module(device, info, out_shader_module, out_error);
+}
+
+void lrhi_destroy_shader_module(LRHIShaderModule shader_module)
+{
+    ((LRHIShaderModuleBase*)shader_module)->vtable->destroy_shader_module(shader_module);
+}
+
+void lrhi_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info)
+{
+    ((LRHIShaderModuleBase*)shader_module)->vtable->get_shader_module_info(shader_module, out_info);
+}
