@@ -5,3 +5,11 @@ Luminary RHI is a render hardware interface used by the prioprietary Luminary en
 ## Backends
 
 Luminary RHI currently supports Metal 3 and 4.
+
+## Extras
+
+Luminary RHI also provides a few goodies and extras you might be interested in:
+
+- ImGui implementation
+- Include file for your shader
+- Shader compiler for easier bootstrapping

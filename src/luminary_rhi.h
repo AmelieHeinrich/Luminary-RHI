@@ -1,25 +1,7 @@
 #ifndef LUMINARY_RHI_H
 #define LUMINARY_RHI_H
 
-#include <stdint.h>
-
-#define LUMINARY_OPAQUE_TYPE(name) typedef struct name##_opaque* name
-
-/// The selected RHI backend to use. This is used when creating a device, and determines which graphics API the device will use.
-typedef enum LRHIBackend {
-    LUMINARY_RHI_BACKEND_VULKAN,
-    LUMINARY_RHI_BACKEND_D3D12,
-    LUMINARY_RHI_BACKEND_METAL3,
-    LUMINARY_RHI_BACKEND_METAL4,
-    LUMINARY_RHI_BACKEND_SWITCH,
-    LUMINARY_RHI_BACKEND_PLAYSTATION
-} LRHIBackend;
-
-typedef enum LRHIErrorSeverity {
-    LUMINARY_RHI_ERROR_SEVERITY_SUCCESS,
-    LUMINARY_RHI_ERROR_SEVERITY_WARNING,
-    LUMINARY_RHI_ERROR_SEVERITY_ERROR
-} LRHIErrorSeverity;
+#include "luminary_rhi_common.h"
 
 /// The type of handle used for swap chain creation. This is used when creating a swap chain, and determines how the swap chain will be created and what kind of windowing system it will use.
 typedef enum LRHISwapChainHandleType {
@@ -94,8 +76,54 @@ typedef enum LRHIRenderStage {
     LUMINARY_RHI_RENDER_STAGE_COPY = 1 << 6,
 } LRHIRenderStage;
 
+typedef enum LRHIPipelineTopology {
+    LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST,
+    LUMINARY_RHI_PIPELINE_TOPOLOGY_LINE_LIST,
+    LUMINARY_RHI_PIPELINE_TOPOLOGY_POINT_LIST
+} LRHIPipelineTopology;
+
+typedef enum LRHIPipelineFillMode {
+    LUMINARY_RHI_PIPELINE_FILL_MODE_SOLID,
+    LUMINARY_RHI_PIPELINE_FILL_MODE_WIREFRAME
+} LRHIPipelineFillMode;
+
+typedef enum LRHIPipelineCullMode {
+    LUMINARY_RHI_PIPELINE_CULL_MODE_NONE,
+    LUMINARY_RHI_PIPELINE_CULL_MODE_FRONT,
+    LUMINARY_RHI_PIPELINE_CULL_MODE_BACK
+} LRHIPipelineCullMode;
+
+typedef enum LRHIPipelineFrontFace {
+    LUMINARY_RHI_PIPELINE_FRONT_FACE_COUNTER_CLOCKWISE,
+    LUMINARY_RHI_PIPELINE_FRONT_FACE_CLOCKWISE
+} LRHIPipelineFrontFace;
+
+typedef enum LRHICompareOperation {
+    LUMINARY_RHI_COMPARE_OPERATION_NEVER,
+    LUMINARY_RHI_COMPARE_OPERATION_LESS,
+    LUMINARY_RHI_COMPARE_OPERATION_EQUAL,
+    LUMINARY_RHI_COMPARE_OPERATION_LESS_EQUAL,
+    LUMINARY_RHI_COMPARE_OPERATION_GREATER,
+    LUMINARY_RHI_COMPARE_OPERATION_NOT_EQUAL,
+    LUMINARY_RHI_COMPARE_OPERATION_GREATER_EQUAL,
+    LUMINARY_RHI_COMPARE_OPERATION_ALWAYS
+} LRHICompareOperation;
+
 #define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
 #define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
+
+#define LUMINARY_BLEND_FACTOR_ZERO 0
+#define LUMINARY_BLEND_FACTOR_ONE 1
+#define LUMINARY_BLEND_FACTOR_SRC_COLOR 2
+#define LUMINARY_BLEND_FACTOR_ONE_MINUS_SRC_COLOR 3
+#define LUMINARY_BLEND_FACTOR_DST_COLOR 4
+#define LUMINARY_BLEND_FACTOR_ONE_MINUS_DST_COLOR 5
+#define LUMINARY_BLEND_FACTOR_SRC_ALPHA 6
+#define LUMINARY_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA 7
+#define LUMINARY_BLEND_FACTOR_DST_ALPHA 8
+#define LUMINARY_BLEND_FACTOR_ONE_MINUS_DST_ALPHA 9
+#define LUMINARY_BLEND_FACTOR_SRC_ALPHA_SATURATE 10
+#define LUMINARY_BLEND_FACTOR_BLEND_COLOR 11
 
 // Types
 LUMINARY_OPAQUE_TYPE(LRHIDevice);
@@ -107,7 +135,7 @@ LUMINARY_OPAQUE_TYPE(LRHIBuffer);
 LUMINARY_OPAQUE_TYPE(LRHITexture);
 LUMINARY_OPAQUE_TYPE(LRHISampler);
 LUMINARY_OPAQUE_TYPE(LRHIAccelerationStructure);
-LUMINARY_OPAQUE_TYPE(LRHIGraphicsPipeline);
+LUMINARY_OPAQUE_TYPE(LRHIRenderPipeline);
 LUMINARY_OPAQUE_TYPE(LRHIComputePipeline);
 LUMINARY_OPAQUE_TYPE(LRHIMeshPipeline);
 LUMINARY_OPAQUE_TYPE(LRHIRenderPass);
@@ -119,11 +147,7 @@ LUMINARY_OPAQUE_TYPE(LRHIResidencySet);
 LUMINARY_OPAQUE_TYPE(LRHITextureView);
 LUMINARY_OPAQUE_TYPE(LRHIBufferView);
 
-/// Structs
-typedef struct LRHIError {
-    char message[256];
-    LRHIErrorSeverity severity;
-} LRHIError;
+// Structs
 
 typedef struct LRHIDeviceFeatures {
     uint8_t ray_tracing : 1;
@@ -222,6 +246,41 @@ typedef struct LRHIRenderPassInfo {
     uint32_t render_height;
 } LRHIRenderPassInfo;
 
+typedef struct LRHIRenderPipelineInfo {
+    // Rasterizer
+    LRHIPipelineFillMode fill_mode;
+    LRHIPipelineCullMode cull_mode;
+    LRHIPipelineFrontFace front_face;
+    LRHIPipelineTopology topology;
+
+    // Depth-stencil
+    uint8_t depth_test_enable;
+    uint8_t depth_write_enable;
+    LRHICompareOperation depth_compare_op;
+    uint8_t stencil_test_enable;
+    uint8_t stencil_write_enable;
+    LRHICompareOperation stencil_compare_op;
+    LRHITextureFormat depth_stencil_format;
+
+    // Blending and color output
+    uint8_t blend_enable;
+    uint8_t src_color_blend_factor;
+    uint8_t dst_color_blend_factor;
+    uint8_t color_blend_op;
+    uint8_t src_alpha_blend_factor;
+    uint8_t dst_alpha_blend_factor;
+    uint8_t alpha_blend_op;
+    LRHITextureFormat render_target_formats[8];
+    uint32_t render_target_count;
+
+    LRHIShaderModule vertex_shader;
+    LRHIShaderModule fragment_shader;
+    LRHIShaderModule mesh_shader;
+    LRHIShaderModule task_shader;
+} LRHIRenderPipelineInfo;
+
+typedef struct LRHIRenderPipelineInfo LRHIMeshPipelineInfo;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -313,6 +372,9 @@ void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStag
 
 /*
     TODO:
+        Shader compiler:
+            - Compile
+            - Reflect
         Sampler:
             - create/destroy
             - get info
@@ -326,9 +388,6 @@ void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStag
             - create/destroy
             - get info
         Render Pass:
-            - create/destroy
-            - get info
-            - begin/end
             - set pipeline state
             - set vertex buffers
             - set index buffers
@@ -338,8 +397,6 @@ void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStag
             - draw indexed
             - execute indirect
             - draw mesh tasks
-            - intrapass barriers
-            - consumer barriers
         Compute Pass:
             - create/destroy
             - get info

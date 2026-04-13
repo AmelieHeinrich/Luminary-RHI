@@ -35,7 +35,23 @@ target("examples")
         add_files("examples/**.mm")
     end
 
+target("shader_compiler")
+    set_kind("static")
+    add_includedirs("extras/shader_compiler")
+    add_files("extras/shader_compiler/luminary_shader_compiler.cpp")
+
+    if is_plat("macosx") then
+        add_files("extras/shader_compiler/luminary_shader_compiler_msl.mm")
+        add_files("extras/shader_compiler/luminary_shader_compiler_msc.mm")
+    end
+
 target("tests")
     set_kind("binary")
     add_files("tests/**.cpp")
-    add_deps("luminary_rhi")
+    add_deps("luminary_rhi", "shader_compiler")
+    add_includedirs("extras/shader_compiler")
+
+    if is_plat("macosx") then
+        add_rpathdirs("bin/")
+        add_syslinks("bin/libdxcompiler.dylib", "bin/libmetalirconverter.dylib")
+    end
