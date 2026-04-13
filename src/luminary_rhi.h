@@ -78,6 +78,9 @@ typedef enum LRHIBufferUsage {
     LUMINARY_RHI_BUFFER_USAGE_STAGING = 1 << 6
 } LRHIBufferUsage;
 
+#define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
+#define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
+
 // Types
 LUMINARY_OPAQUE_TYPE(LRHIDevice);
 LUMINARY_OPAQUE_TYPE(LRHICommandQueue);
@@ -97,6 +100,8 @@ LUMINARY_OPAQUE_TYPE(LRHICopyPass);
 LUMINARY_OPAQUE_TYPE(LRHIAccelerationStructurePass);
 LUMINARY_OPAQUE_TYPE(LRHIShaderModule);
 LUMINARY_OPAQUE_TYPE(LRHIResidencySet);
+LUMINARY_OPAQUE_TYPE(LRHITextureView);
+LUMINARY_OPAQUE_TYPE(LRHIBufferView);
 
 /// Structs
 typedef struct LRHIError {
@@ -165,6 +170,19 @@ typedef struct LRHISwapChainInfo {
     LRHITextureFormat format;               // typically LUMINARY_RHI_TEXTURE_FORMAT_B8G8R8A8_UNORM
     uint8_t           max_frames_in_flight; // Metal4: controls frame-in-flight depth; Metal3: ignored
 } LRHISwapChainInfo;
+
+typedef struct LRHITextureViewInfo {
+    LRHITexture texture;
+
+    uint32_t base_mip_level;
+    uint32_t mip_level_count;
+    uint32_t base_array_layer;
+    uint32_t array_layer_count;
+
+    LRHITextureFormat format; // if the view should reinterpret the texture's format, otherwise LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED to use the texture's format
+    LRHITextureUsage usage;
+    LRHITextureDimensions dimensions;
+} LRHITextureViewInfo;
 
 #ifdef __cplusplus
 extern "C" {
@@ -236,15 +254,19 @@ void lrhi_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_er
 
 // SwapChain functions
 // NOTE: the texture returned by lrhi_swap_chain_get_current_texture is borrowed — valid until the next lrhi_swap_chain_present on the same swapchain.
-void        lrhi_create_swap_chain(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
-void        lrhi_destroy_swap_chain(LRHISwapChain swap_chain);
+void lrhi_create_swap_chain(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
+void lrhi_destroy_swap_chain(LRHISwapChain swap_chain);
 LRHITexture lrhi_swap_chain_get_current_texture(LRHISwapChain swap_chain, LRHIError* out_error);
-void        lrhi_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error);
+void lrhi_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error);
+
+// Texture view functions
+void lrhi_create_texture_view(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error);
+void lrhi_destroy_texture_view(LRHITextureView texture_view);
+void lrhi_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info);
+uint32_t lrhi_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error);
 
 /*
     TODO:
-        Swap Chain:
-            - resize
         Sampler:
             - create/destroy
             - get info
@@ -257,9 +279,6 @@ void        lrhi_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_err
         Mesh Pipeline:
             - create/destroy
             - get info
-        Descriptor heap:
-            - allocate
-            - free
         Render Pass:
             - create/destroy
             - get info
@@ -301,6 +320,12 @@ void        lrhi_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_err
             - build (indirect), metal only
             - copy
             - compact
+        Texture view:
+            - create/destroy
+            - get info
+        Buffer view:
+            - create/destroy
+            - get info
 */
 
 #ifdef __cplusplus

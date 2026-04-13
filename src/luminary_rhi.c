@@ -252,3 +252,23 @@ void lrhi_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error)
 {
     ((LRHISwapChainBase*)swap_chain)->vtable->present(swap_chain, out_error);
 }
+
+void lrhi_create_texture_view(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_texture_view(device, info, out_texture_view, out_error);
+}
+
+void lrhi_destroy_texture_view(LRHITextureView texture_view)
+{
+    ((LRHITextureViewBase*)texture_view)->vtable->destroy_texture_view(texture_view);
+}
+
+void lrhi_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info)
+{
+    ((LRHITextureViewBase*)texture_view)->vtable->get_texture_view_info(texture_view, out_info);
+}
+
+uint32_t lrhi_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error)
+{
+    return ((LRHITextureViewBase*)texture_view)->vtable->get_bindless_index(texture_view, out_error);
+}

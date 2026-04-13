@@ -14,6 +14,7 @@ typedef struct LRHIDeviceVTable {
     void           (*create_fence)(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
     void           (*create_residency_set)(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error);
     void           (*create_swap_chain)(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
+    void           (*create_texture_view)(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -77,16 +78,23 @@ typedef struct LRHISwapChainVTable {
     void        (*present)(LRHISwapChain swap_chain, LRHIError* out_error);
 } LRHISwapChainVTable;
 
+typedef struct LRHITextureViewVTable {
+    void (*destroy_texture_view)(LRHITextureView texture_view);
+    void (*get_texture_view_info)(LRHITextureView texture_view, LRHITextureViewInfo* out_info);
+    uint32_t (*get_bindless_index)(LRHITextureView texture_view, LRHIError* out_error);
+} LRHITextureViewVTable;
+
 // Base structs — must be the first member of every backend struct.
-typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*       vtable; } LRHIDeviceBase;
-typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable* vtable; } LRHICommandQueueBase;
-typedef struct LRHIFenceBase        { const LRHIFenceVTable*        vtable; } LRHIFenceBase;
-typedef struct LRHITextureBase      { const LRHITextureVTable*      vtable; } LRHITextureBase;
-typedef struct LRHIBufferBase       { const LRHIBufferVTable*       vtable; } LRHIBufferBase;
-typedef struct LRHICommandListBase  { const LRHICommandListVTable*  vtable; } LRHICommandListBase;
-typedef struct LRHICopyPassBase     { const LRHICopyPassVTable*     vtable; } LRHICopyPassBase;
-typedef struct LRHIResidencySetBase { const LRHIResidencySetVTable*  vtable; } LRHIResidencySetBase;
-typedef struct LRHISwapChainBase    { const LRHISwapChainVTable*     vtable; } LRHISwapChainBase;
+typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*         vtable; } LRHIDeviceBase;
+typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable*   vtable; } LRHICommandQueueBase;
+typedef struct LRHIFenceBase        { const LRHIFenceVTable*          vtable; } LRHIFenceBase;
+typedef struct LRHITextureBase      { const LRHITextureVTable*        vtable; } LRHITextureBase;
+typedef struct LRHIBufferBase       { const LRHIBufferVTable*         vtable; } LRHIBufferBase;
+typedef struct LRHICommandListBase  { const LRHICommandListVTable*    vtable; } LRHICommandListBase;
+typedef struct LRHICopyPassBase     { const LRHICopyPassVTable*       vtable; } LRHICopyPassBase;
+typedef struct LRHIResidencySetBase { const LRHIResidencySetVTable*   vtable; } LRHIResidencySetBase;
+typedef struct LRHISwapChainBase    { const LRHISwapChainVTable*      vtable; } LRHISwapChainBase;
+typedef struct LRHITextureViewBase  { const LRHITextureViewVTable*    vtable; } LRHITextureViewBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

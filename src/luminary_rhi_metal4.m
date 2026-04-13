@@ -1,3 +1,4 @@
+#include "luminary_rhi.h"
 #include "luminary_rhi_internal.h"
 
 #include <Metal/Metal.h>
@@ -58,6 +59,13 @@ typedef struct LRHISwapChainMetal4 {
     LRHISwapChainInfo    info;
 } LRHISwapChainMetal4;
 
+typedef struct LRHITextureViewMetal4 {
+    LRHITextureViewBase base;
+    LRHITextureViewInfo info;
+    id<MTLTexture> texture_view;
+    uint32_t bindless_index; // For bindless resource indexing, if supported
+} LRHITextureViewMetal4;
+
 // Forward declarations
 static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage lrhi_metal4_texture_usage(LRHITextureUsage usage);
@@ -117,6 +125,11 @@ static void            lrhi_metal4_create_swap_chain(LRHIDevice device, LRHIComm
 static void            lrhi_metal4_destroy_swap_chain(LRHISwapChain swap_chain);
 static LRHITexture     lrhi_metal4_swap_chain_get_current_texture(LRHISwapChain swap_chain, LRHIError* out_error);
 static void            lrhi_metal4_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error);
+
+static void            lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error);
+static void            lrhi_metal4_destroy_texture_view(LRHITextureView texture_view);
+static void            lrhi_metal4_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info);
+static uint32_t        lrhi_metal4_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error);
 
 // Vtable instances
 
@@ -186,6 +199,12 @@ static const LRHIResidencySetVTable lrhi_metal4_residency_set_vtable = {
     .remove_texture = lrhi_metal4_residency_set_remove_texture,
     .remove_buffer = lrhi_metal4_residency_set_remove_buffer,
     .update = lrhi_metal4_residency_set_update,
+};
+
+static const LRHITextureViewVTable lrhi_metal4_texture_view_vtable = {
+    .destroy_texture_view = lrhi_metal4_destroy_texture_view,
+    .get_texture_view_info = lrhi_metal4_get_texture_view_info,
+    .get_bindless_index = lrhi_metal4_texture_view_get_bindless_index,
 };
 
 static void lrhi_metal4_swap_chain_texture_destroy_noop(LRHITexture texture) { (void)texture; }
@@ -709,6 +728,90 @@ static void lrhi_metal4_residency_set_update(LRHIResidencySet residency_set, LRH
 {
     LRHIResidencySetMetal4* metal_residency_set = (LRHIResidencySetMetal4*)residency_set;
     [metal_residency_set->residency_set commit];
+}
+
+// Texture view
+
+static void lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error)
+{
+    // If info is same as base texture, don't create a view.
+    // Otherwise, create a new texture view with the same underlying texture but different descriptor.
+    LRHITextureMetal4* metal_texture = (LRHITextureMetal4*)info->texture;
+    if (info->format == LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED) {
+        info->format = metal_texture->info.format;
+    }
+
+    // Create the view
+    LRHITextureViewMetal4* out = malloc(sizeof(LRHITextureViewMetal4));
+    out->base.vtable = &lrhi_metal4_texture_view_vtable;
+    out->info = *info;
+    out->bindless_index = UINT32_MAX; // TODO: Implement bindless resource indexing
+
+    // Validate
+    uint8_t is_same_as_base_texture = (info->texture == (LRHITexture)metal_texture) &&
+                                (info->format == metal_texture->info.format) &&
+                                (info->base_mip_level == 0) &&
+                                ((info->mip_level_count == metal_texture->info.mip_levels) ||
+                                (info->mip_level_count == LUMINARY_TEXTURE_VIEW_ALL_MIPS)) &&
+                                (info->base_array_layer == 0) &&
+                                ((info->array_layer_count == metal_texture->info.array_layers) ||
+                                (info->array_layer_count == LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS)) &&
+                                (info->usage == metal_texture->info.usage);
+    if (!is_same_as_base_texture) {
+        MTLTextureViewDescriptor* descriptor = [[MTLTextureViewDescriptor alloc] init];
+        descriptor.pixelFormat = lrhi_metal4_pixel_format(info->format);
+        if (info->mip_level_count == LUMINARY_TEXTURE_VIEW_ALL_MIPS) {
+            descriptor.levelRange = NSMakeRange(info->base_mip_level, metal_texture->info.mip_levels - info->base_mip_level);
+        } else {
+            descriptor.levelRange = NSMakeRange(info->base_mip_level, info->mip_level_count);
+        }
+        if (info->array_layer_count == LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS) {
+            descriptor.sliceRange = NSMakeRange(info->base_array_layer, metal_texture->info.array_layers - info->base_array_layer);
+        } else {
+            descriptor.sliceRange = NSMakeRange(info->base_array_layer, info->array_layer_count);
+        }
+        descriptor.textureType = lrhi_metal4_texture_type(metal_texture->info.dimensions);
+
+        out->texture_view = [metal_texture->texture newTextureViewWithDescriptor:descriptor];
+    } else {
+        out->texture_view = metal_texture->texture;
+    }
+    if (!out->texture_view) {
+        free(out);
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create texture view");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_texture_view = NULL;
+        return;
+    }
+    *out_texture_view = (LRHITextureView)out;
+}
+
+static void lrhi_metal4_destroy_texture_view(LRHITextureView texture_view)
+{
+    free(texture_view);
+}
+
+static void lrhi_metal4_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info)
+{
+    LRHITextureViewMetal4* metal_texture_view = (LRHITextureViewMetal4*)texture_view;
+    *out_info = metal_texture_view->info;
+}
+
+static uint32_t lrhi_metal4_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error)
+{
+    LRHITextureViewMetal4* metal_texture_view = (LRHITextureViewMetal4*)texture_view;
+    LRHITextureViewInfo view_info = metal_texture_view->info;
+    if (view_info.usage != LUMINARY_RHI_TEXTURE_USAGE_SAMPLED && view_info.usage != LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Only sampled and storage texture views can be used with bindless resources");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return UINT32_MAX;
+    }
+
+    return metal_texture_view->bindless_index;
 }
 
 // Utils
