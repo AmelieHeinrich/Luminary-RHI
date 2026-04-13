@@ -66,11 +66,19 @@ typedef struct LRHITextureViewMetal4 {
     uint32_t bindless_index; // For bindless resource indexing, if supported
 } LRHITextureViewMetal4;
 
+typedef struct LRHIRenderPassMetal4 {
+    LRHIRenderPassBase base;
+    id<MTL4RenderCommandEncoder> render_encoder;
+} LRHIRenderPassMetal4;
+
 // Forward declarations
 static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage lrhi_metal4_texture_usage(LRHITextureUsage usage);
 static MTLTextureType  lrhi_metal4_texture_type(LRHITextureDimensions type);
 static void            lrhi_metal4_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error);
+static MTLStages       lrhi_metal4_render_stage_to_mtl(LRHIRenderStage stage);
+static MTLLoadAction   lrhi_metal4_load_action_to_mtl(LRHIRenderPassAction load_op);
+static MTLStoreAction  lrhi_metal4_store_action_to_mtl(LRHIRenderPassAction store_op);
 
 static void            lrhi_metal4_destroy_device(LRHIDevice device);
 static LRHIDeviceInfo  lrhi_metal4_get_device_info(LRHIDevice device);
@@ -108,6 +116,8 @@ static void            lrhi_metal4_command_list_reset(LRHICommandList command_li
 static LRHICopyPass    lrhi_metal4_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error);
 
 static void            lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_encoder_barrier(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal4_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
 static void            lrhi_metal4_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error);
 static void            lrhi_metal4_copy_pass_copy_buffer_to_texture(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
@@ -131,6 +141,11 @@ static void            lrhi_metal4_destroy_texture_view(LRHITextureView texture_
 static void            lrhi_metal4_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info);
 static uint32_t        lrhi_metal4_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error);
 
+static LRHIRenderPass  lrhi_metal4_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
@@ -144,6 +159,7 @@ static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
     .create_fence         = lrhi_metal4_create_fence,
     .create_residency_set = lrhi_metal4_create_residency_set,
     .create_swap_chain    = lrhi_metal4_create_swap_chain,
+    .create_texture_view  = lrhi_metal4_create_texture_view,
 };
 
 static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
@@ -182,10 +198,13 @@ static const LRHICommandListVTable lrhi_metal4_command_list_vtable = {
     .command_list_end     = lrhi_metal4_command_list_end,
     .command_list_reset   = lrhi_metal4_command_list_reset,
     .copy_pass_begin      = lrhi_metal4_command_list_begin_copy_pass,
+    .render_pass_begin    = lrhi_metal4_render_pass_begin,
 };
 
 static const LRHICopyPassVTable lrhi_metal4_copy_pass_vtable = {
     .copy_pass_end = lrhi_metal4_copy_pass_end,
+    .copy_pass_intra_barrier = lrhi_metal4_copy_pass_intra_barrier,
+    .copy_pass_encoder_barrier = lrhi_metal4_copy_pass_encoder_barrier,
     .copy_texture_to_texture = lrhi_metal4_copy_pass_copy_texture_to_texture,
     .copy_buffer_to_buffer = lrhi_metal4_copy_pass_copy_buffer_to_buffer,
     .copy_buffer_to_texture = lrhi_metal4_copy_pass_copy_buffer_to_texture,
@@ -220,6 +239,12 @@ static const LRHISwapChainVTable lrhi_metal4_swap_chain_vtable = {
     .destroy_swap_chain  = lrhi_metal4_destroy_swap_chain,
     .get_current_texture = lrhi_metal4_swap_chain_get_current_texture,
     .present             = lrhi_metal4_swap_chain_present,
+};
+
+static const LRHIRenderPassVTable lrhi_metal4_render_pass_vtable = {
+    .end = lrhi_metal4_render_pass_end,
+    .intra_barrier = lrhi_metal4_render_pass_intra_barrier,
+    .encoder_barrier = lrhi_metal4_render_pass_encoder_barrier,
 };
 
 // Device
@@ -615,6 +640,18 @@ static void lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_err
     free(metal_copy_pass);
 }
 
+static void lrhi_metal4_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error)
+{
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    [metal_copy_pass->blit_encoder barrierAfterEncoderStages:MTLStageBlit beforeEncoderStages:MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
+static void lrhi_metal4_copy_pass_encoder_barrier(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error)
+{
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    [metal_copy_pass->blit_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(afterStage) beforeStages:MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
 static void lrhi_metal4_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error)
 {
     LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
@@ -770,7 +807,7 @@ static void lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewIn
         } else {
             descriptor.sliceRange = NSMakeRange(info->base_array_layer, info->array_layer_count);
         }
-        descriptor.textureType = lrhi_metal4_texture_type(metal_texture->info.dimensions);
+        descriptor.textureType = lrhi_metal4_texture_type(info->dimensions);
 
         out->texture_view = [metal_texture->texture newTextureViewWithDescriptor:descriptor];
     } else {
@@ -814,7 +851,106 @@ static uint32_t lrhi_metal4_texture_view_get_bindless_index(LRHITextureView text
     return metal_texture_view->bindless_index;
 }
 
+// Render pass
+
+static LRHIRenderPass lrhi_metal4_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error)
+{
+    LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_list;
+
+    MTL4RenderPassDescriptor* render_pass_descriptor = [[MTL4RenderPassDescriptor alloc] init];
+    render_pass_descriptor.renderTargetWidth = info->render_width;
+    render_pass_descriptor.renderTargetHeight = info->render_height;
+    for (int i = 0; i < info->color_attachment_count; i++) {
+        LRHIRenderPassAttachmentInfo* attachment = &info->color_attachments[i];
+        LRHITextureViewMetal4* metal_texture_view = (LRHITextureViewMetal4*)attachment->texture_view;
+        render_pass_descriptor.colorAttachments[i].texture = metal_texture_view->texture_view;
+        render_pass_descriptor.colorAttachments[i].loadAction = lrhi_metal4_load_action_to_mtl(attachment->load_action);
+        render_pass_descriptor.colorAttachments[i].storeAction = lrhi_metal4_store_action_to_mtl(attachment->store_action);
+        render_pass_descriptor.colorAttachments[i].clearColor = MTLClearColorMake(attachment->clear_color[0], attachment->clear_color[1], attachment->clear_color[2], attachment->clear_color[3]);
+    }
+    if (info->has_depth_stencil_attachment) {
+        LRHIRenderPassAttachmentInfo* attachment = &info->depth_stencil_attachment;
+        LRHITextureViewMetal4* metal_texture_view = (LRHITextureViewMetal4*)attachment->texture_view;
+        render_pass_descriptor.depthAttachment.texture = metal_texture_view->texture_view;
+        render_pass_descriptor.depthAttachment.loadAction = lrhi_metal4_load_action_to_mtl(attachment->load_action);
+        render_pass_descriptor.depthAttachment.storeAction = lrhi_metal4_store_action_to_mtl(attachment->store_action);
+        render_pass_descriptor.depthAttachment.clearDepth = attachment->clear_depth;
+
+        render_pass_descriptor.stencilAttachment.texture = metal_texture_view->texture_view;
+        render_pass_descriptor.stencilAttachment.loadAction = lrhi_metal4_load_action_to_mtl(attachment->load_action);
+        render_pass_descriptor.stencilAttachment.storeAction = lrhi_metal4_store_action_to_mtl(attachment->store_action);
+        render_pass_descriptor.stencilAttachment.clearStencil = attachment->clear_stencil;
+    }
+
+    id<MTL4RenderCommandEncoder> render_encoder = [metal_cmd_list->command_buffer renderCommandEncoderWithDescriptor:render_pass_descriptor];
+    if (!render_encoder) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create render command encoder for render pass");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return NULL;
+    }
+
+    LRHIRenderPassMetal4* render_pass = malloc(sizeof(LRHIRenderPassMetal4));
+    render_pass->base.vtable = &lrhi_metal4_render_pass_vtable;
+    render_pass->render_encoder = render_encoder;
+    return (LRHIRenderPass)render_pass;
+}
+
+static void lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    [metal_render_pass->render_encoder endEncoding];
+    free(metal_render_pass);
+}
+
+static void lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    [metal_render_pass->render_encoder barrierAfterEncoderStages:lrhi_metal4_render_stage_to_mtl(beforeStage) beforeEncoderStages:lrhi_metal4_render_stage_to_mtl(afterStage) visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
+static void lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(beforeStage) beforeStages:lrhi_metal4_render_stage_to_mtl(afterStage) visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
 // Utils
+
+static MTLStages lrhi_metal4_render_stage_to_mtl(LRHIRenderStage stage)
+{
+    MTLStages mtl_stages = 0;
+    if (stage & LUMINARY_RHI_RENDER_STAGE_VERTEX)   mtl_stages |= MTLStageVertex;
+    if (stage & LUMINARY_RHI_RENDER_STAGE_FRAGMENT) mtl_stages |= MTLStageFragment;
+    if (stage & LUMINARY_RHI_RENDER_STAGE_COMPUTE)  mtl_stages |= MTLStageDispatch;
+    if (stage & LUMINARY_RHI_RENDER_STAGE_COPY)     mtl_stages |= MTLStageBlit;
+    if (stage & LUMINARY_RHI_RENDER_STAGE_ACCELERATION_STRUCTURE_BUILD) mtl_stages |= MTLStageAccelerationStructure;
+    if (stage & LUMINARY_RHI_RENDER_STAGE_MESH)    mtl_stages |= MTLStageMesh;
+    if (stage & LUMINARY_RHI_RENDER_STAGE_TASK)    mtl_stages |= MTLStageObject;
+    return mtl_stages;
+}
+
+static MTLLoadAction lrhi_metal4_load_action_to_mtl(LRHIRenderPassAction load_op)
+{
+    if (load_op == LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR) {
+        return MTLLoadActionClear;
+    } else if (load_op == LUMINARY_RHI_RENDER_PASS_ACTION_LOAD) {
+        return MTLLoadActionLoad;
+    } else {
+        return MTLLoadActionDontCare;
+    }
+    return MTLLoadActionDontCare;
+}
+
+static MTLStoreAction lrhi_metal4_store_action_to_mtl(LRHIRenderPassAction store_op)
+{
+    if (store_op == LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR) {
+        return MTLStoreActionStore;
+    }
+    return MTLStoreActionDontCare;
+}
 
 static void lrhi_metal4_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error)
 {

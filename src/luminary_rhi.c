@@ -178,6 +178,16 @@ void lrhi_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error)
     ((LRHICopyPassBase*)copy_pass)->vtable->copy_pass_end(copy_pass, out_error);
 }
 
+void lrhi_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->copy_pass_intra_barrier(copy_pass, out_error);
+}
+
+void lrhi_copy_pass_encoder_barrier(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->copy_pass_encoder_barrier(copy_pass, afterStage, out_error);
+}
+
 void lrhi_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error)
 {
     ((LRHICopyPassBase*)copy_pass)->vtable->copy_buffer_to_buffer(copy_pass, src_buffer, src_offset, dst_buffer, dst_offset, size, out_error);
@@ -271,4 +281,24 @@ void lrhi_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInf
 uint32_t lrhi_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error)
 {
     return ((LRHITextureViewBase*)texture_view)->vtable->get_bindless_index(texture_view, out_error);
+}
+
+LRHIRenderPass lrhi_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error)
+{
+    return ((LRHICommandListBase*)command_list)->vtable->render_pass_begin(command_list, info, out_error);
+}
+
+void lrhi_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->end(render_pass, out_error);
+}
+
+void lrhi_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->intra_barrier(render_pass, beforeStage, afterStage, out_error);
+}
+
+void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->encoder_barrier(render_pass, beforeStage, afterStage, out_error);
 }

@@ -78,6 +78,22 @@ typedef enum LRHIBufferUsage {
     LUMINARY_RHI_BUFFER_USAGE_STAGING = 1 << 6
 } LRHIBufferUsage;
 
+typedef enum LRHIRenderPassAction {
+    LUMINARY_RHI_RENDER_PASS_ACTION_LOAD,
+    LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR,
+    LUMINARY_RHI_RENDER_PASS_ACTION_DONT_CARE
+} LRHIRenderPassAction;
+
+typedef enum LRHIRenderStage {
+    LUMINARY_RHI_RENDER_STAGE_VERTEX = 1 << 0,
+    LUMINARY_RHI_RENDER_STAGE_FRAGMENT = 1 << 1,
+    LUMINARY_RHI_RENDER_STAGE_COMPUTE = 1 << 2,
+    LUMINARY_RHI_RENDER_STAGE_MESH = 1 << 3,
+    LUMINARY_RHI_RENDER_STAGE_TASK = 1 << 4,
+    LUMINARY_RHI_RENDER_STAGE_ACCELERATION_STRUCTURE_BUILD = 1 << 5,
+    LUMINARY_RHI_RENDER_STAGE_COPY = 1 << 6,
+} LRHIRenderStage;
+
 #define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
 #define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
 
@@ -184,6 +200,28 @@ typedef struct LRHITextureViewInfo {
     LRHITextureDimensions dimensions;
 } LRHITextureViewInfo;
 
+typedef struct LRHIRenderPassAttachmentInfo {
+    LRHITextureView texture_view;
+    LRHIRenderPassAction load_action;
+    LRHIRenderPassAction store_action;
+    float clear_color[4]; // only used if load_action is LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR and the attachment is a color texture
+    float clear_depth;    // only used if load_action is LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR and the attachment is a depth texture
+    uint8_t clear_stencil; // only used if load_action is LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR and the attachment is a stencil texture
+} LRHIRenderPassAttachmentInfo;
+
+typedef struct LRHIRenderPassInfo {
+    LRHIRenderPassAttachmentInfo color_attachments[8];
+    uint32_t color_attachment_count;
+
+    LRHIRenderPassAttachmentInfo depth_stencil_attachment;
+    uint8_t has_depth_stencil_attachment;
+
+    uint32_t render_area_x;
+    uint32_t render_area_y;
+    uint32_t render_width;
+    uint32_t render_height;
+} LRHIRenderPassInfo;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -238,6 +276,8 @@ void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error)
 // Copy pass functions
 LRHICopyPass lrhi_copy_pass_begin(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
+void lrhi_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error); // Blit-Blit barrier
+void lrhi_copy_pass_encoder_barrier(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error); // afterStage-Blit barrier
 void lrhi_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error);
 void lrhi_copy_pass_copy_buffer_to_texture(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
 void lrhi_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHIBuffer dst_buffer, uint64_t dst_offset, uint32_t dst_bytes_per_row, uint32_t dst_bytes_per_image, LRHIError* out_error);
@@ -264,6 +304,12 @@ void lrhi_create_texture_view(LRHIDevice device, LRHITextureViewInfo* info, LRHI
 void lrhi_destroy_texture_view(LRHITextureView texture_view);
 void lrhi_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info);
 uint32_t lrhi_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error);
+
+// Render pass functions
+LRHIRenderPass lrhi_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
+void lrhi_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
+void lrhi_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 
 /*
     TODO:
@@ -320,9 +366,6 @@ uint32_t lrhi_texture_view_get_bindless_index(LRHITextureView texture_view, LRHI
             - build (indirect), metal only
             - copy
             - compact
-        Texture view:
-            - create/destroy
-            - get info
         Buffer view:
             - create/destroy
             - get info

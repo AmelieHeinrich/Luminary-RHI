@@ -53,10 +53,13 @@ typedef struct LRHICommandListVTable {
     void (*command_list_end)(LRHICommandList command_list, LRHIError* out_error);
     void (*command_list_reset)(LRHICommandList command_list, LRHIError* out_error);
     LRHICopyPass (*copy_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
+    LRHIRenderPass (*render_pass_begin)(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
 } LRHICommandListVTable;
 
 typedef struct LRHICopyPassVTable {
     void (*copy_pass_end)(LRHICopyPass copy_pass, LRHIError* out_error);
+    void (*copy_pass_intra_barrier)(LRHICopyPass copy_pass, LRHIError* out_error);
+    void (*copy_pass_encoder_barrier)(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error);
     void (*copy_buffer_to_buffer)(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error);
     void (*copy_buffer_to_texture)(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
     void (*copy_texture_to_buffer)(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHIBuffer dst_buffer, uint64_t dst_offset, uint32_t dst_bytes_per_row, uint32_t dst_bytes_per_image, LRHIError* out_error);
@@ -84,6 +87,12 @@ typedef struct LRHITextureViewVTable {
     uint32_t (*get_bindless_index)(LRHITextureView texture_view, LRHIError* out_error);
 } LRHITextureViewVTable;
 
+typedef struct LRHIRenderPassVTable {
+    void (*end)(LRHIRenderPass render_pass, LRHIError* out_error);
+    void (*intra_barrier)(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+    void (*encoder_barrier)(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+} LRHIRenderPassVTable;
+
 // Base structs — must be the first member of every backend struct.
 typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*         vtable; } LRHIDeviceBase;
 typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable*   vtable; } LRHICommandQueueBase;
@@ -95,6 +104,7 @@ typedef struct LRHICopyPassBase     { const LRHICopyPassVTable*       vtable; } 
 typedef struct LRHIResidencySetBase { const LRHIResidencySetVTable*   vtable; } LRHIResidencySetBase;
 typedef struct LRHISwapChainBase    { const LRHISwapChainVTable*      vtable; } LRHISwapChainBase;
 typedef struct LRHITextureViewBase  { const LRHITextureViewVTable*    vtable; } LRHITextureViewBase;
+typedef struct LRHIRenderPassBase   { const LRHIRenderPassVTable*     vtable; } LRHIRenderPassBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
