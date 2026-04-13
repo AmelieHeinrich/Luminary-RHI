@@ -9,3 +9,5 @@ tests/output
 *.swift
 .claude
 diag
+
+.DS_Store
