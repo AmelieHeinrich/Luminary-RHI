@@ -1,3 +1,4 @@
+#include "luminary_rhi.h"
 #include "tests/test.h"
 
 #include <cstdio>
@@ -10,19 +11,24 @@
 
 struct copy_cmd_ctx
 {
-    LRHICommandQueue queue        = nullptr;
-    LRHIFence        fence        = nullptr;
-    LRHICommandList  command_list = nullptr;
-    LRHICopyPass     copy_pass    = nullptr;
-    bool             ok           = false;
+    LRHICommandQueue  queue        = nullptr;
+    LRHIFence         fence        = nullptr;
+    LRHICommandList   command_list = nullptr;
+    LRHICopyPass      copy_pass    = nullptr;
+    bool              ok           = false;
 };
 
-static copy_cmd_ctx begin_copy(LRHIDevice device, std::string& err_out)
+// residency_set must already be populated and committed before calling begin_copy.
+static copy_cmd_ctx begin_copy(LRHIDevice device, LRHIResidencySet residency_set, std::string& err_out)
 {
     copy_cmd_ctx ctx;
     LRHIError err = {};
 
     lrhi_create_command_queue(device, &ctx.queue, &err);
+    if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) { err_out = err.message; return ctx; }
+
+    err = {};
+    lrhi_command_queue_add_residency_set(ctx.queue, residency_set, &err);
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) { err_out = err.message; return ctx; }
 
     err = {};
@@ -79,9 +85,10 @@ class copy_buffer_to_buffer_full_test : public test
     static constexpr uint64_t ELEMENT_COUNT = 256;
     static constexpr uint64_t BUFFER_SIZE   = ELEMENT_COUNT * sizeof(uint32_t);
 
-    LRHIDevice _device = nullptr;
-    LRHIBuffer _src    = nullptr;
-    LRHIBuffer _dst    = nullptr;
+    LRHIDevice       _device        = nullptr;
+    LRHIBuffer       _src           = nullptr;
+    LRHIBuffer       _dst           = nullptr;
+    LRHIResidencySet _residency_set = nullptr;
 
 public:
     copy_buffer_to_buffer_full_test()
@@ -110,6 +117,15 @@ public:
         lrhi_create_buffer(_device, &info, &_dst, &err);
         if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR)
             fprintf(stderr, "%s::init (dst): %s\n", name, err.message);
+
+        err = {};
+        lrhi_create_residency_set(_device, &_residency_set, &err);
+        if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR)
+            fprintf(stderr, "%s::init (residency_set): %s\n", name, err.message);
+
+        lrhi_residency_set_add_buffer(_residency_set, _src, nullptr);
+        lrhi_residency_set_add_buffer(_residency_set, _dst, nullptr);
+        lrhi_residency_set_update(_residency_set, nullptr);
     }
 
     test_result run(bool bake_mode) override
@@ -127,7 +143,7 @@ public:
 
         // Copy full src → dst
         std::string err_msg;
-        auto ctx = begin_copy(_device, err_msg);
+        auto ctx = begin_copy(_device, _residency_set, err_msg);
         if (!ctx.ok) return { false, "begin_copy: " + err_msg };
 
         LRHIError err = {};
@@ -162,6 +178,7 @@ public:
 
     void cleanup() override
     {
+        if (_residency_set) { lrhi_destroy_residency_set(_residency_set); _residency_set = nullptr; }
         if (_src) { lrhi_destroy_buffer(_src); _src = nullptr; }
         if (_dst) { lrhi_destroy_buffer(_dst); _dst = nullptr; }
     }
@@ -180,9 +197,10 @@ class copy_buffer_to_buffer_offset_test : public test
     static constexpr uint64_t SRC_SIZE     = SRC_ELEMENTS * sizeof(uint32_t); // 1024 bytes
     static constexpr uint64_t DST_SIZE     = 512;                              // 128 words
 
-    LRHIDevice _device = nullptr;
-    LRHIBuffer _src    = nullptr;
-    LRHIBuffer _dst    = nullptr;
+    LRHIDevice       _device        = nullptr;
+    LRHIBuffer       _src           = nullptr;
+    LRHIBuffer       _dst           = nullptr;
+    LRHIResidencySet _residency_set = nullptr;
 
 public:
     copy_buffer_to_buffer_offset_test()
@@ -213,6 +231,15 @@ public:
         lrhi_create_buffer(_device, &dst_info, &_dst, &err);
         if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR)
             fprintf(stderr, "%s::init (dst): %s\n", name, err.message);
+
+        err = {};
+        lrhi_create_residency_set(_device, &_residency_set, &err);
+        if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR)
+            fprintf(stderr, "%s::init (residency_set): %s\n", name, err.message);
+
+        lrhi_residency_set_add_buffer(_residency_set, _src, nullptr);
+        lrhi_residency_set_add_buffer(_residency_set, _dst, nullptr);
+        lrhi_residency_set_update(_residency_set, nullptr);
     }
 
     test_result run(bool bake_mode) override
@@ -230,7 +257,7 @@ public:
 
         // Copy bytes [512, 1024) of src → [0, 512) of dst  (words 128–255)
         std::string err_msg;
-        auto ctx = begin_copy(_device, err_msg);
+        auto ctx = begin_copy(_device, _residency_set, err_msg);
         if (!ctx.ok) return { false, "begin_copy: " + err_msg };
 
         LRHIError err = {};
@@ -265,6 +292,7 @@ public:
 
     void cleanup() override
     {
+        if (_residency_set) { lrhi_destroy_residency_set(_residency_set); _residency_set = nullptr; }
         if (_src) { lrhi_destroy_buffer(_src); _src = nullptr; }
         if (_dst) { lrhi_destroy_buffer(_dst); _dst = nullptr; }
     }

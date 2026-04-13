@@ -66,8 +66,16 @@ static bool upload_texture(LRHIDevice device, LRHITexture texture,
     memcpy(ptr, pixels.data(), pixels.size());
     lrhi_buffer_unmap(staging);
 
+    LRHIResidencySet rs = nullptr;
+    lrhi_create_residency_set(device, &rs, nullptr);
+    lrhi_residency_set_add_buffer(rs, staging, nullptr);
+    lrhi_residency_set_add_texture(rs, texture, nullptr);
+    lrhi_residency_set_update(rs, nullptr);
+
     LRHICommandQueue queue = nullptr;
     lrhi_create_command_queue(device, &queue, &err);
+    lrhi_command_queue_add_residency_set(queue, rs, nullptr);
+
     LRHIFence fence = nullptr;
     err = {};
     lrhi_create_fence(device, 0, &fence, &err);
@@ -82,6 +90,7 @@ static bool upload_texture(LRHIDevice device, LRHITexture texture,
         lrhi_destroy_command_list(cmd);
         lrhi_destroy_fence(fence);
         lrhi_destroy_command_queue(queue);
+        lrhi_destroy_residency_set(rs);
         lrhi_destroy_buffer(staging);
         return false;
     }
@@ -101,6 +110,7 @@ static bool upload_texture(LRHIDevice device, LRHITexture texture,
         lrhi_destroy_command_list(cmd);
         lrhi_destroy_fence(fence);
         lrhi_destroy_command_queue(queue);
+        lrhi_destroy_residency_set(rs);
         lrhi_destroy_buffer(staging);
         return false;
     }
@@ -111,6 +121,7 @@ static bool upload_texture(LRHIDevice device, LRHITexture texture,
     lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, nullptr);
     lrhi_fence_wait(fence, 1, 5000000000ULL, nullptr);
 
+    lrhi_destroy_residency_set(rs);
     lrhi_destroy_command_list(cmd);
     lrhi_destroy_fence(fence);
     lrhi_destroy_command_queue(queue);
@@ -124,9 +135,16 @@ static bool copy_tex_to_tex(LRHIDevice device,
                              LRHITexture dst, LRHIRegion dst_region, uint32_t dst_mip, uint32_t dst_layer,
                              std::string& err_out)
 {
+    LRHIResidencySet rs = nullptr;
+    lrhi_create_residency_set(device, &rs, nullptr);
+    lrhi_residency_set_add_texture(rs, src, nullptr);
+    lrhi_residency_set_add_texture(rs, dst, nullptr);
+    lrhi_residency_set_update(rs, nullptr);
+
     LRHIError err = {};
     LRHICommandQueue queue = nullptr;
     lrhi_create_command_queue(device, &queue, &err);
+    lrhi_command_queue_add_residency_set(queue, rs, nullptr);
 
     err = {};
     LRHIFence fence = nullptr;
@@ -141,6 +159,7 @@ static bool copy_tex_to_tex(LRHIDevice device,
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
         err_out = std::string("cmd begin: ") + err.message;
         lrhi_destroy_command_list(cmd); lrhi_destroy_fence(fence); lrhi_destroy_command_queue(queue);
+        lrhi_destroy_residency_set(rs);
         return false;
     }
 
@@ -156,6 +175,7 @@ static bool copy_tex_to_tex(LRHIDevice device,
         lrhi_copy_pass_end(cp, nullptr);
         lrhi_command_list_end(cmd, nullptr);
         lrhi_destroy_command_list(cmd); lrhi_destroy_fence(fence); lrhi_destroy_command_queue(queue);
+        lrhi_destroy_residency_set(rs);
         return false;
     }
 
@@ -164,6 +184,7 @@ static bool copy_tex_to_tex(LRHIDevice device,
     lrhi_command_queue_submit(queue, &cmd, 1, fence, 1, nullptr, 0, nullptr);
     lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, nullptr); lrhi_fence_wait(fence, 1, 5000000000ULL, nullptr);
 
+    lrhi_destroy_residency_set(rs);
     lrhi_destroy_command_list(cmd);
     lrhi_destroy_fence(fence);
     lrhi_destroy_command_queue(queue);

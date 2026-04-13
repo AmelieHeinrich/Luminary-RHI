@@ -95,6 +95,7 @@ LUMINARY_OPAQUE_TYPE(LRHIComputePass);
 LUMINARY_OPAQUE_TYPE(LRHICopyPass);
 LUMINARY_OPAQUE_TYPE(LRHIAccelerationStructurePass);
 LUMINARY_OPAQUE_TYPE(LRHIShaderModule);
+LUMINARY_OPAQUE_TYPE(LRHIResidencySet);
 
 /// Structs
 typedef struct LRHIError {
@@ -184,6 +185,7 @@ void lrhi_destroy_command_queue(LRHICommandQueue queue);
 void lrhi_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
 void lrhi_command_queue_wait(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
 void lrhi_command_queue_submit(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error);
+void lrhi_command_queue_add_residency_set(LRHICommandQueue queue, LRHIResidencySet residency_set, LRHIError* out_error);
 
 // Fence functions
 void lrhi_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
@@ -206,6 +208,15 @@ void lrhi_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src
 void lrhi_copy_pass_copy_buffer_to_texture(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, uint32_t src_bytes_per_row, uint32_t src_bytes_per_image, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
 void lrhi_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHIBuffer dst_buffer, uint64_t dst_offset, uint32_t dst_bytes_per_row, uint32_t dst_bytes_per_image, LRHIError* out_error);
 void lrhi_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
+
+// Residency set functions
+void lrhi_create_residency_set(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error);
+void lrhi_destroy_residency_set(LRHIResidencySet residency_set);
+void lrhi_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
+void lrhi_residency_set_add_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+void lrhi_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
+void lrhi_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+void lrhi_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error);
 
 /*
     TODO:

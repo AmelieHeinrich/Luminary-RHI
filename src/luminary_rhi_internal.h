@@ -12,6 +12,7 @@ typedef struct LRHIDeviceVTable {
     void           (*buffer_readback)(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
     void           (*create_command_queue)(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
     void           (*create_fence)(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
+    void           (*create_residency_set)(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -20,6 +21,7 @@ typedef struct LRHICommandQueueVTable {
     void (*signal_fence)(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error);
     void (*wait_fence)(LRHICommandQueue queue, LRHIFence fence, uint64_t value, uint64_t timeout_ns, LRHIError* out_error);
     void (*submit_command_lists)(LRHICommandQueue queue, LRHICommandList* command_lists, uint32_t command_list_count, LRHIFence signal_fence, uint64_t signal_value, LRHIFence wait_fence, uint64_t wait_value, LRHIError* out_error);
+    void (*add_residency_set)(LRHICommandQueue queue, LRHIResidencySet residency_set, LRHIError* out_error);
 } LRHICommandQueueVTable;
 
 typedef struct LRHIFenceVTable {
@@ -59,6 +61,15 @@ typedef struct LRHICopyPassVTable {
     void (*copy_texture_to_texture)(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
 } LRHICopyPassVTable;
 
+typedef struct LRHIResidencySetVTable {
+    void (*destroy_residency_set)(LRHIResidencySet residency_set);
+    void (*add_texture)(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
+    void (*add_buffer)(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+    void (*remove_texture)(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
+    void (*remove_buffer)(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+    void (*update)(LRHIResidencySet residency_set, LRHIError* out_error);
+} LRHIResidencySetVTable;
+
 // Base structs — must be the first member of every backend struct.
 typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*       vtable; } LRHIDeviceBase;
 typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable* vtable; } LRHICommandQueueBase;
@@ -67,6 +78,7 @@ typedef struct LRHITextureBase      { const LRHITextureVTable*      vtable; } LR
 typedef struct LRHIBufferBase       { const LRHIBufferVTable*       vtable; } LRHIBufferBase;
 typedef struct LRHICommandListBase  { const LRHICommandListVTable*  vtable; } LRHICommandListBase;
 typedef struct LRHICopyPassBase     { const LRHICopyPassVTable*     vtable; } LRHICopyPassBase;
+typedef struct LRHIResidencySetBase { const LRHIResidencySetVTable*  vtable; } LRHIResidencySetBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

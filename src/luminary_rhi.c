@@ -113,6 +113,11 @@ void lrhi_command_queue_submit(LRHICommandQueue queue, LRHICommandList* command_
     ((LRHICommandQueueBase*)queue)->vtable->submit_command_lists(queue, command_lists, command_list_count, signal_fence, signal_value, wait_fence, wait_value, out_error);
 }
 
+void lrhi_command_queue_add_residency_set(LRHICommandQueue queue, LRHIResidencySet residency_set, LRHIError* out_error)
+{
+    ((LRHICommandQueueBase*)queue)->vtable->add_residency_set(queue, residency_set, out_error);
+}
+
 void lrhi_create_fence(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error)
 {
     ((LRHIDeviceBase*)device)->vtable->create_fence(device, initial_value, out_fence, out_error);
@@ -191,4 +196,39 @@ void lrhi_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, LRHITexture s
 void lrhi_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error)
 {
     ((LRHICopyPassBase*)copy_pass)->vtable->copy_texture_to_texture(copy_pass, src_texture, src_region, src_mip_level, src_array_layer, dst_texture, dst_region, dst_mip_level, dst_array_layer, out_error);
+}
+
+void lrhi_create_residency_set(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_residency_set(device, out_residency_set, out_error);
+}
+
+void lrhi_destroy_residency_set(LRHIResidencySet residency_set)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->destroy_residency_set(residency_set);
+}
+
+void lrhi_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->add_texture(residency_set, texture, out_error);
+}
+
+void lrhi_residency_set_add_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->add_buffer(residency_set, buffer, out_error);
+}
+
+void lrhi_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->remove_texture(residency_set, texture, out_error);
+}
+
+void lrhi_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->remove_buffer(residency_set, buffer, out_error);
+}
+
+void lrhi_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->update(residency_set, out_error);
 }
