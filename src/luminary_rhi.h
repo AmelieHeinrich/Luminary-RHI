@@ -26,7 +26,8 @@ typedef enum LRHISwapChainHandleType {
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_HWND,
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER,
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_X11,
-    LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_WAYLAND
+    LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_WAYLAND,
+    LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_XCB,
 } LRHISwapChainHandleType;
 
 typedef enum LRHITextureFormat {
@@ -150,6 +151,21 @@ typedef struct LRHIBufferInfo {
     LRHIBufferUsage usage;
 } LRHIBufferInfo;
 
+typedef struct LRHISwapChainInfo {
+    LRHISwapChainHandleType handle_type;
+    union {
+        void* metal_layer;      // CAMetalLayer* cast to void*
+        void* hwnd;             // HWND on Windows
+        void* x11_window;       // X11 Window cast to void*
+        void* xcb_window;       // xcb_window_t cast to void*
+        void* wayland_surface;  // wl_surface* cast to void*
+    } handle;
+    uint32_t          width;
+    uint32_t          height;
+    LRHITextureFormat format;               // typically LUMINARY_RHI_TEXTURE_FORMAT_B8G8R8A8_UNORM
+    uint8_t           max_frames_in_flight; // Metal4: controls frame-in-flight depth; Metal3: ignored
+} LRHISwapChainInfo;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -218,12 +234,17 @@ void lrhi_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITextu
 void lrhi_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
 void lrhi_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error);
 
+// SwapChain functions
+// NOTE: the texture returned by lrhi_swap_chain_get_current_texture is borrowed — valid until the next lrhi_swap_chain_present on the same swapchain.
+void        lrhi_create_swap_chain(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
+void        lrhi_destroy_swap_chain(LRHISwapChain swap_chain);
+LRHITexture lrhi_swap_chain_get_current_texture(LRHISwapChain swap_chain, LRHIError* out_error);
+void        lrhi_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error);
+
 /*
     TODO:
         Swap Chain:
-            - create/destroy
-            - get back buffer
-            - present
+            - resize
         Sampler:
             - create/destroy
             - get info

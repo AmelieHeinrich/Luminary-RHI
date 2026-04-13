@@ -13,6 +13,7 @@ typedef struct LRHIDeviceVTable {
     void           (*create_command_queue)(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
     void           (*create_fence)(LRHIDevice device, uint64_t initial_value, LRHIFence* out_fence, LRHIError* out_error);
     void           (*create_residency_set)(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error);
+    void           (*create_swap_chain)(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -70,6 +71,12 @@ typedef struct LRHIResidencySetVTable {
     void (*update)(LRHIResidencySet residency_set, LRHIError* out_error);
 } LRHIResidencySetVTable;
 
+typedef struct LRHISwapChainVTable {
+    void        (*destroy_swap_chain)(LRHISwapChain swap_chain);
+    LRHITexture (*get_current_texture)(LRHISwapChain swap_chain, LRHIError* out_error);
+    void        (*present)(LRHISwapChain swap_chain, LRHIError* out_error);
+} LRHISwapChainVTable;
+
 // Base structs — must be the first member of every backend struct.
 typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*       vtable; } LRHIDeviceBase;
 typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable* vtable; } LRHICommandQueueBase;
@@ -79,6 +86,7 @@ typedef struct LRHIBufferBase       { const LRHIBufferVTable*       vtable; } LR
 typedef struct LRHICommandListBase  { const LRHICommandListVTable*  vtable; } LRHICommandListBase;
 typedef struct LRHICopyPassBase     { const LRHICopyPassVTable*     vtable; } LRHICopyPassBase;
 typedef struct LRHIResidencySetBase { const LRHIResidencySetVTable*  vtable; } LRHIResidencySetBase;
+typedef struct LRHISwapChainBase    { const LRHISwapChainVTable*     vtable; } LRHISwapChainBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

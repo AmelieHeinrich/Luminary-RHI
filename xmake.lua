@@ -27,8 +27,13 @@ target("luminary_rhi")
 
 target("examples")
     set_kind("binary")
-    add_files("examples/*.c")
+    add_files("examples/*.cpp")
     add_deps("luminary_rhi")
+
+    if is_plat("macosx") then
+        add_frameworks("Foundation", "Metal", "QuartzCore", "Cocoa")
+        add_files("examples/**.mm")
+    end
 
 target("tests")
     set_kind("binary")

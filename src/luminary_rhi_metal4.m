@@ -1,6 +1,7 @@
 #include "luminary_rhi_internal.h"
 
 #include <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
 #include <dispatch/dispatch.h>
 
 typedef struct LRHIDeviceMetal4 {
@@ -47,6 +48,15 @@ typedef struct LRHIResidencySetMetal4 {
     LRHIResidencySetBase base;
     id<MTLResidencySet> residency_set;
 } LRHIResidencySetMetal4;
+
+typedef struct LRHISwapChainMetal4 {
+    LRHISwapChainBase    base;
+    CAMetalLayer*        layer;
+    id<MTL4CommandQueue> queue;            // needed for waitForDrawable:/signalDrawable:
+    id<CAMetalDrawable>  current_drawable;
+    LRHITextureMetal4    current_texture;  // embedded — no heap allocation per frame
+    LRHISwapChainInfo    info;
+} LRHISwapChainMetal4;
 
 // Forward declarations
 static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
@@ -103,6 +113,11 @@ static void            lrhi_metal4_residency_set_remove_texture(LRHIResidencySet
 static void            lrhi_metal4_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
 static void            lrhi_metal4_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error);
 
+static void            lrhi_metal4_create_swap_chain(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
+static void            lrhi_metal4_destroy_swap_chain(LRHISwapChain swap_chain);
+static LRHITexture     lrhi_metal4_swap_chain_get_current_texture(LRHISwapChain swap_chain, LRHIError* out_error);
+static void            lrhi_metal4_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
@@ -115,6 +130,7 @@ static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
     .create_command_queue = lrhi_metal4_create_command_queue,
     .create_fence         = lrhi_metal4_create_fence,
     .create_residency_set = lrhi_metal4_create_residency_set,
+    .create_swap_chain    = lrhi_metal4_create_swap_chain,
 };
 
 static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
@@ -170,6 +186,21 @@ static const LRHIResidencySetVTable lrhi_metal4_residency_set_vtable = {
     .remove_texture = lrhi_metal4_residency_set_remove_texture,
     .remove_buffer = lrhi_metal4_residency_set_remove_buffer,
     .update = lrhi_metal4_residency_set_update,
+};
+
+static void lrhi_metal4_swap_chain_texture_destroy_noop(LRHITexture texture) { (void)texture; }
+
+static const LRHITextureVTable lrhi_metal4_swap_chain_texture_vtable = {
+    .destroy_texture        = lrhi_metal4_swap_chain_texture_destroy_noop,
+    .get_texture_info       = lrhi_metal4_get_texture_info,
+    .texture_replace_region = lrhi_metal4_texture_replace_region,
+    .texture_read_region    = lrhi_metal4_texture_read_region,
+};
+
+static const LRHISwapChainVTable lrhi_metal4_swap_chain_vtable = {
+    .destroy_swap_chain  = lrhi_metal4_destroy_swap_chain,
+    .get_current_texture = lrhi_metal4_swap_chain_get_current_texture,
+    .present             = lrhi_metal4_swap_chain_present,
 };
 
 // Device
@@ -798,4 +829,104 @@ static MTLTextureType lrhi_metal4_texture_type(LRHITextureDimensions type)
         case LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE:     return MTLTextureTypeCube;
         default:                                       return MTLTextureType2D;
     }
+}
+
+// Swap chain
+
+static void lrhi_metal4_create_swap_chain(LRHIDevice device, LRHICommandQueue queue,
+                                           LRHISwapChainInfo* info,
+                                           LRHISwapChain* out_swap_chain,
+                                           LRHIError* out_error)
+{
+    (void)device;
+
+    if (info->handle_type != LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message),
+                     "Metal4 swap chain only supports METAL_LAYER handle type");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_swap_chain = NULL;
+        return;
+    }
+
+    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+    CAMetalLayer* layer = (__bridge CAMetalLayer*)info->handle.metal_layer;
+
+    uint8_t max_fif = info->max_frames_in_flight > 0 ? info->max_frames_in_flight : 2;
+    layer.pixelFormat          = lrhi_metal4_pixel_format(info->format);
+    layer.drawableSize         = CGSizeMake(info->width, info->height);
+    layer.framebufferOnly      = NO;
+    layer.maximumDrawableCount = (max_fif <= 3) ? max_fif : 3;  // CAMetalLayer caps at 3
+
+    LRHISwapChainMetal4* sc = malloc(sizeof(LRHISwapChainMetal4));
+    sc->base.vtable      = &lrhi_metal4_swap_chain_vtable;
+    sc->layer            = layer;
+    sc->queue            = metal_queue->queue;
+    sc->current_drawable = nil;
+    sc->info             = *info;
+
+    sc->current_texture.base.vtable = &lrhi_metal4_swap_chain_texture_vtable;
+    sc->current_texture.texture     = nil;
+    sc->current_texture.info        = (LRHITextureInfo){
+        .width        = info->width,
+        .height       = info->height,
+        .depth        = 1,
+        .mip_levels   = 1,
+        .array_layers = 1,
+        .format       = info->format,
+        .usage        = LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET,
+        .dimensions   = LUMINARY_RHI_TEXTURE_DIMENSIONS_2D,
+    };
+
+    *out_swap_chain = (LRHISwapChain)sc;
+}
+
+static void lrhi_metal4_destroy_swap_chain(LRHISwapChain swap_chain)
+{
+    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
+    sc->current_drawable = nil;
+    free(sc);
+}
+
+static LRHITexture lrhi_metal4_swap_chain_get_current_texture(LRHISwapChain swap_chain,
+                                                               LRHIError* out_error)
+{
+    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
+    sc->current_drawable = nil;  // discard any un-presented drawable
+
+    id<CAMetalDrawable> drawable = [sc->layer nextDrawable];
+    if (!drawable) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message),
+                     "Metal4: nextDrawable returned nil");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return NULL;
+    }
+
+    sc->current_drawable        = drawable;
+    sc->current_texture.texture = drawable.texture;
+    return (LRHITexture)&sc->current_texture;
+}
+
+static void lrhi_metal4_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error)
+{
+    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
+    if (!sc->current_drawable) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message),
+                     "Metal4: present called with no current drawable");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
+        }
+        return;
+    }
+    // Both are GPU-timeline events enqueued on the command queue after all rendering commands:
+    // waitForDrawable: ensures the display has finished reading this drawable before the GPU re-uses it
+    // signalDrawable:  signals the display system that rendering into this drawable is complete
+    [sc->queue waitForDrawable:sc->current_drawable];
+    [sc->queue signalDrawable:sc->current_drawable];
+    [sc->current_drawable present];
+    sc->current_drawable        = nil;
+    sc->current_texture.texture = nil;
 }

@@ -232,3 +232,23 @@ void lrhi_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_er
 {
     ((LRHIResidencySetBase*)residency_set)->vtable->update(residency_set, out_error);
 }
+
+void lrhi_create_swap_chain(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_swap_chain(device, queue, info, out_swap_chain, out_error);
+}
+
+void lrhi_destroy_swap_chain(LRHISwapChain swap_chain)
+{
+    ((LRHISwapChainBase*)swap_chain)->vtable->destroy_swap_chain(swap_chain);
+}
+
+LRHITexture lrhi_swap_chain_get_current_texture(LRHISwapChain swap_chain, LRHIError* out_error)
+{
+    return ((LRHISwapChainBase*)swap_chain)->vtable->get_current_texture(swap_chain, out_error);
+}
+
+void lrhi_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error)
+{
+    ((LRHISwapChainBase*)swap_chain)->vtable->present(swap_chain, out_error);
+}
