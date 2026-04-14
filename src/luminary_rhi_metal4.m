@@ -1498,6 +1498,7 @@ static void lrhi_metal4_create_render_pipeline(LRHIDevice device, LRHIRenderPipe
     out->pipeline_state = pipeline_state;
     out->depth_stencil_state = depth_stencil_state;
     out->info = *info;
+    out->bindless_manager = &metal_device->bindless_manager;
     *out_pipeline = (LRHIRenderPipeline)out;
 }
 
@@ -1570,6 +1571,7 @@ static void lrhi_metal4_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipeline
     out->pipeline_state = pipeline_state;
     out->depth_stencil_state = depth_stencil_state;
     out->info = *info;
+    out->bindless_manager = &metal_device->bindless_manager;
     *out_pipeline = (LRHIMeshPipeline)out;
 }
 
@@ -1617,6 +1619,7 @@ static void lrhi_metal4_create_compute_pipeline(LRHIDevice device, LRHIComputePi
     out->base.vtable = &lrhi_metal4_compute_pipeline_vtable;
     out->pipeline_state = pipeline_state;
     out->info = *info;
+    out->bindless_manager = &metal_device->bindless_manager;
     *out_pipeline = (LRHIComputePipeline)out;
 }
 

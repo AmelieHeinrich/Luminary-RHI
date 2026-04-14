@@ -1108,6 +1108,7 @@ static void lrhi_metal3_create_texture_view(LRHIDevice device, LRHITextureViewIn
     if (info->usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || info->usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
         out->bindless_index = lrhi_metal3_bindless_manager_write_texture_view(&metal_device->bindless_manager, out, out_error);
     }
+    out->bindless_manager = &metal_device->bindless_manager;
     *out_texture_view = (LRHITextureView)out;
 }
 
