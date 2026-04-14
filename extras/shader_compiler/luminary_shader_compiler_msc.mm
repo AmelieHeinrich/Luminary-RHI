@@ -141,8 +141,8 @@ uint8_t* __luminary_compile_shader_msc(const LuminaryShaderCompilerOptions* opti
     compileArgs.push_back(L"-T");
     compileArgs.push_back(wideTarget);
     if (options->add_debug_symbols) {
-    compileArgs.push_back(L"-Qembed_debug");
-    compileArgs.push_back(L"-Zi");
+        compileArgs.push_back(L"-Qembed_debug");
+        compileArgs.push_back(L"-Zi");
     }
     if (options->use_raytracing) {
         compileArgs.push_back(L"-DLUMINARY_RAYTRACING");
@@ -192,21 +192,50 @@ uint8_t* __luminary_compile_shader_msc(const LuminaryShaderCompilerOptions* opti
     if (options->use_point_topology) {
         IRCompilerSetInputTopology(compiler, IRInputTopologyPoint);
     }
+    IRCompilerSetValidationFlags(compiler, IRCompilerValidationFlagValidateDXIL);
+    IRCompilerSetStageInGenerationMode(compiler, IRStageInCodeGenerationModeUseSeparateStageInFunction);
 
     IRError* compileError = nullptr;
     auto metalIR = IRCompilerAllocCompileAndLink(compiler, options->entry_point, module, &compileError);
     if (compileError) {
         auto errorCode = IRErrorGetCode(compileError);
 
-        fprintf(stderr, "Metal IR generation failed with code %u", errorCode);
+        fprintf(stderr, "Metal IR generation failed with code %u\n", errorCode);
         IRErrorDestroy(compileError);
+    }
+    if (!metalIR) {
+        fprintf(stderr, "IRCompilerAllocCompileAndLink returned null\n");
+        IRObjectDestroy(module);
+        IRCompilerDestroy(compiler);
+        IRRootSignatureDestroy(root_sig);
+        dlclose(dxcLib);
+        return nullptr;
     }
 
     IRMetalLibBinary* pMetallib = IRMetalLibBinaryCreate();
-    IRObjectGetMetalLibBinary(metalIR, IRObjectGetMetalIRShaderStage(metalIR), pMetallib);
+    if (!IRObjectGetMetalLibBinary(metalIR, IRObjectGetMetalIRShaderStage(metalIR), pMetallib)) {
+        fprintf(stderr, "Failed to get Metal lib binary from compiled shader\n");
+        IRMetalLibBinaryDestroy(pMetallib);
+        IRObjectDestroy(module);
+        IRObjectDestroy(metalIR);
+        IRCompilerDestroy(compiler);
+        IRRootSignatureDestroy(root_sig);
+        dlclose(dxcLib);
+        return nullptr;
+    }
     uint64_t bytecodeSize = IRMetalLibGetBytecodeSize(pMetallib);
 
-    uint8_t* result = new uint8_t[bytecodeSize];
+    uint8_t* result = (uint8_t*)malloc(bytecodeSize);
+    if (!result) {
+        fprintf(stderr, "Failed to allocate memory for shader bytecode\n");
+        IRMetalLibBinaryDestroy(pMetallib);
+        IRObjectDestroy(module);
+        IRObjectDestroy(metalIR);
+        IRCompilerDestroy(compiler);
+        IRRootSignatureDestroy(root_sig);
+        dlclose(dxcLib);
+        return nullptr;
+    }
     IRMetalLibGetBytecode(pMetallib, result);
     *out_bytecode_size = bytecodeSize;
 

@@ -98,6 +98,7 @@ typedef struct LRHIRenderPassVTable {
     void (*set_mesh_pipeline)(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error);
     void (*set_viewport)(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error);
     void (*set_scissor)(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error);
+    void (*set_push_constants)(LRHIRenderPass render_pass, const void* data, uint32_t size, LRHIError* out_error);
     void (*draw)(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
     void (*draw_indexed)(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error);
     void (*draw_mesh_tasks)(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error);

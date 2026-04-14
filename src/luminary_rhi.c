@@ -378,6 +378,11 @@ void lrhi_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32
     ((LRHIRenderPassBase*)render_pass)->vtable->set_scissor(render_pass, x, y, width, height, out_error);
 }
 
+void lrhi_render_pass_set_push_constants(LRHIRenderPass render_pass, const void* data, uint32_t size, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->set_push_constants(render_pass, data, size, out_error);
+}
+
 void lrhi_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error)
 {
     ((LRHIRenderPassBase*)render_pass)->vtable->draw(render_pass, vertex_count, instance_count, first_vertex, first_instance, out_error);

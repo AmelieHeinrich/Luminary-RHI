@@ -30,6 +30,7 @@ typedef struct LRHICommandQueueMetal4 {
     LRHICommandQueueBase base;
     id<MTL4CommandQueue> queue;
     id<MTLDevice> device;
+    id<MTLResidencySet> internal_residency_set;
 } LRHICommandQueueMetal4;
 
 typedef struct LRHIFenceMetal4 {
@@ -73,12 +74,19 @@ typedef struct LRHITextureViewMetal4 {
     uint32_t bindless_index; // For bindless resource indexing, if supported
 } LRHITextureViewMetal4;
 
+typedef struct LRHIArgumentBufferData {
+    char push_constants[128];
+    uint32_t draw_id;
+} LRHIArgumentBufferData;
+
 typedef struct LRHIRenderPassMetal4 {
     LRHIRenderPassBase base;
     id<MTL4RenderCommandEncoder> render_encoder;
 
     LRHIRenderPipeline current_render_pipeline;
     LRHICommandListMetal4* command_list;
+    char current_push_constants[128];
+    uint32_t current_draw_id;
 } LRHIRenderPassMetal4;
 
 typedef struct LRHIShaderModuleMetal4 {
@@ -186,6 +194,8 @@ static void            lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass rend
 static void            lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_set_push_constants(LRHIRenderPass render_pass, const void* data, uint32_t size, LRHIError* out_error);
+static void            lrhi_metal4_flush_push_constants(LRHIRenderPassMetal4* render_pass, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
@@ -310,6 +320,7 @@ static const LRHIRenderPassVTable lrhi_metal4_render_pass_vtable = {
     .encoder_barrier = lrhi_metal4_render_pass_encoder_barrier,
     .set_viewport = lrhi_metal4_render_pass_set_viewport,
     .set_scissor = lrhi_metal4_render_pass_set_scissor,
+    .set_push_constants = lrhi_metal4_render_pass_set_push_constants,
     .set_render_pipeline = lrhi_metal4_render_pass_set_render_pipeline,
     .set_mesh_pipeline = lrhi_metal4_render_pass_set_mesh_pipeline,
     .draw = lrhi_metal4_render_pass_draw,
@@ -526,10 +537,25 @@ static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue
         return;
     }
 
+    MTLResidencySetDescriptor* internal_rs_desc = [[MTLResidencySetDescriptor alloc] init];
+    internal_rs_desc.label = @"LRHIInternalResidencySet";
+    NSError* rs_error = nil;
+    id<MTLResidencySet> internal_residency_set = [metal_device->device newResidencySetWithDescriptor:internal_rs_desc error:&rs_error];
+    if (!internal_residency_set || rs_error) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create internal residency set");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_queue = NULL;
+        return;
+    }
+    [base_queue addResidencySet:internal_residency_set];
+
     LRHICommandQueueMetal4* out = malloc(sizeof(LRHICommandQueueMetal4));
     out->base.vtable = &lrhi_metal4_command_queue_vtable;
     out->queue = base_queue;
     out->device = metal_device->device;
+    out->internal_residency_set = internal_residency_set;
     *out_queue = (LRHICommandQueue)out;
 }
 
@@ -678,6 +704,9 @@ static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandL
     out->compute_argument_table = [metal_queue->device newArgumentTableWithDescriptor:argument_table_descriptor error:&argument_error];
     out->push_constant_buffer = [metal_queue->device newBufferWithLength:1024 * 1024 options:MTLResourceStorageModeShared];
     out->push_constant_offset = 0;
+
+    [metal_queue->internal_residency_set addAllocation:out->push_constant_buffer];
+    [metal_queue->internal_residency_set commit];
 
     *out_command_list = (LRHICommandList)out;
 }
@@ -990,10 +1019,9 @@ static LRHIRenderPass lrhi_metal4_render_pass_begin(LRHICommandList command_list
         return NULL;
     }
 
-    LRHIRenderPassMetal4* render_pass = malloc(sizeof(LRHIRenderPassMetal4));
+    LRHIRenderPassMetal4* render_pass = calloc(1, sizeof(LRHIRenderPassMetal4));
     render_pass->base.vtable = &lrhi_metal4_render_pass_vtable;
     render_pass->render_encoder = render_encoder;
-    render_pass->current_render_pipeline = NULL;
     render_pass->command_list = metal_cmd_list;
     
     [render_encoder setArgumentTable:metal_cmd_list->render_argument_table atStages:MTLRenderStageVertex | MTLRenderStageFragment];
@@ -1019,6 +1047,35 @@ static void lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, 
 {
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
     [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(beforeStage) beforeStages:lrhi_metal4_render_stage_to_mtl(afterStage) visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
+static void lrhi_metal4_render_pass_set_push_constants(LRHIRenderPass render_pass, const void* data, uint32_t size, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    uint32_t copy_size = size < 128 ? size : 128;
+    memcpy(metal_render_pass->current_push_constants, data, copy_size);
+}
+
+static void lrhi_metal4_flush_push_constants(LRHIRenderPassMetal4* render_pass, LRHIError* out_error)
+{
+    LRHICommandListMetal4* cmd = render_pass->command_list;
+
+    if (cmd->push_constant_offset + 256 > (uint32_t)cmd->push_constant_buffer.length) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Push constant linear allocator exhausted");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return;
+    }
+
+    uint32_t offset = cmd->push_constant_offset;
+    LRHIArgumentBufferData* slot = (LRHIArgumentBufferData*)((uint8_t*)cmd->push_constant_buffer.contents + offset);
+    memcpy(slot->push_constants, render_pass->current_push_constants, 128);
+    slot->draw_id = render_pass->current_draw_id++;
+    cmd->push_constant_offset += 256;
+
+    [cmd->render_argument_table setAddress:cmd->push_constant_buffer.gpuAddress + offset atIndex:kIRArgumentBufferBindPoint];
 }
 
 static void lrhi_metal4_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error)
@@ -1081,6 +1138,9 @@ static void lrhi_metal4_render_pass_draw(LRHIRenderPass render_pass, uint32_t ve
     LRHICommandListMetal4* metal_cmd_list = metal_render_pass->command_list;
     MTLPrimitiveType primitive_type = lrhi_metal4_primitive_topology_to_mtl(metal_render_pass->current_render_pipeline ? ((LRHIRenderPipelineMetal4*)metal_render_pass->current_render_pipeline)->info.topology : LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST);
 
+    lrhi_metal4_flush_push_constants(metal_render_pass, out_error);
+    if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
+
     // TODO: Check for if we're using a Metal Shader Converter pipeline or not.
     uint32_t required_size = sizeof(IRRuntimeDrawParams);
     required_size = (required_size + 255) & ~255;
@@ -1118,7 +1178,10 @@ static void lrhi_metal4_render_pass_draw_indexed(LRHIRenderPass render_pass, uin
 
     MTLPrimitiveType primitive_type = lrhi_metal4_primitive_topology_to_mtl(metal_render_pass->current_render_pipeline ? ((LRHIRenderPipelineMetal4*)metal_render_pass->current_render_pipeline)->info.topology : LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST);
     MTLIndexType mtl_index_type = (index_stride == 4) ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
-    
+
+    lrhi_metal4_flush_push_constants(metal_render_pass, out_error);
+    if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
+
     // TODO: Check for if we're using a Metal Shader Converter pipeline or not.
     uint32_t required_size = sizeof(IRRuntimeDrawParams);
     required_size = (required_size + 255) & ~255;
@@ -1152,6 +1215,10 @@ static void lrhi_metal4_render_pass_draw_indexed(LRHIRenderPass render_pass, uin
 static void lrhi_metal4_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error)
 {
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+
+    lrhi_metal4_flush_push_constants(metal_render_pass, out_error);
+    if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
+
     [metal_render_pass->render_encoder drawMeshThreadgroups:MTLSizeMake(num_groups_x, num_groups_y, num_groups_z) threadsPerObjectThreadgroup:MTLSizeMake(threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z) threadsPerMeshThreadgroup:MTLSizeMake(threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z)];
 }
 

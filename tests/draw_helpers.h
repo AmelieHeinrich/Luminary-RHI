@@ -52,6 +52,7 @@ static std::pair<uint8_t*, uint64_t> dh_compile_stage(
     opts.source_code_size   = source.size();
     opts.defines_count      = defines_count;
     opts.use_point_topology = use_point_topology ? 1 : 0;
+    opts.add_debug_symbols   = 1;
     for (uint32_t i = 0; i < defines_count && i < 256; ++i)
         opts.defines[i] = defines[i];
 
