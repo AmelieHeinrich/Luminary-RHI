@@ -18,6 +18,7 @@ typedef struct LRHIDeviceVTable {
     void           (*create_shader_module)(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
     void           (*create_render_pipeline)(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error);
     void           (*create_mesh_pipeline)(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error);
+    void           (*create_compute_pipeline)(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -57,6 +58,7 @@ typedef struct LRHICommandListVTable {
     void (*command_list_reset)(LRHICommandList command_list, LRHIError* out_error);
     LRHICopyPass (*copy_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
     LRHIRenderPass (*render_pass_begin)(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
+    LRHIComputePass (*compute_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
 } LRHICommandListVTable;
 
 typedef struct LRHICopyPassVTable {
@@ -121,25 +123,59 @@ typedef struct LRHIMeshPipelineVTable {
     uint64_t (*get_alloc_size)(LRHIMeshPipeline pipeline, LRHIError* out_error);
 } LRHIMeshPipelineVTable;
 
+typedef struct LRHIComputePipelineVTable {
+    void (*destroy_compute_pipeline)(LRHIComputePipeline pipeline);
+    void (*get_compute_pipeline_info)(LRHIComputePipeline pipeline, LRHIComputePipelineInfo* out_info);
+    uint64_t (*get_alloc_size)(LRHIComputePipeline pipeline, LRHIError* out_error);
+} LRHIComputePipelineVTable;
+
+typedef struct LRHIComputePassVTable {
+    void (*end)(LRHIComputePass compute_pass, LRHIError* out_error);
+    void (*barrier)(LRHIComputePass compute_pass, LRHIError* out_error);
+    void (*encoder_barrier)(LRHIComputePass compute_pass, LRHIRenderStage after_stage, LRHIError* out_error);
+    void (*set_pipeline)(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error);
+    void (*set_push_constants)(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error);
+    void (*dispatch)(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error);
+} LRHIComputePassVTable;
+
 // Base structs — must be the first member of every backend struct.
-typedef struct LRHIDeviceBase         { const LRHIDeviceVTable*         vtable; } LRHIDeviceBase;
-typedef struct LRHICommandQueueBase   { const LRHICommandQueueVTable*   vtable; } LRHICommandQueueBase;
-typedef struct LRHIFenceBase          { const LRHIFenceVTable*          vtable; } LRHIFenceBase;
-typedef struct LRHITextureBase        { const LRHITextureVTable*        vtable; } LRHITextureBase;
-typedef struct LRHIBufferBase         { const LRHIBufferVTable*         vtable; } LRHIBufferBase;
-typedef struct LRHICommandListBase    { const LRHICommandListVTable*    vtable; } LRHICommandListBase;
-typedef struct LRHICopyPassBase       { const LRHICopyPassVTable*       vtable; } LRHICopyPassBase;
-typedef struct LRHIResidencySetBase   { const LRHIResidencySetVTable*   vtable; } LRHIResidencySetBase;
-typedef struct LRHISwapChainBase      { const LRHISwapChainVTable*      vtable; } LRHISwapChainBase;
-typedef struct LRHITextureViewBase    { const LRHITextureViewVTable*    vtable; } LRHITextureViewBase;
-typedef struct LRHIRenderPassBase     { const LRHIRenderPassVTable*     vtable; } LRHIRenderPassBase;
-typedef struct LRHIShaderModuleBase   { const LRHIShaderModuleVTable*   vtable; } LRHIShaderModuleBase;
-typedef struct LRHIRenderPipelineBase { const LRHIRenderPipelineVTable* vtable; } LRHIRenderPipelineBase;
-typedef struct LRHIMeshPipelineBase   { const LRHIMeshPipelineVTable*   vtable; } LRHIMeshPipelineBase;
+typedef struct LRHIDeviceBase          { const LRHIDeviceVTable*          vtable; } LRHIDeviceBase;
+typedef struct LRHICommandQueueBase    { const LRHICommandQueueVTable*    vtable; } LRHICommandQueueBase;
+typedef struct LRHIFenceBase           { const LRHIFenceVTable*           vtable; } LRHIFenceBase;
+typedef struct LRHITextureBase         { const LRHITextureVTable*         vtable; } LRHITextureBase;
+typedef struct LRHIBufferBase          { const LRHIBufferVTable*          vtable; } LRHIBufferBase;
+typedef struct LRHICommandListBase     { const LRHICommandListVTable*     vtable; } LRHICommandListBase;
+typedef struct LRHICopyPassBase        { const LRHICopyPassVTable*        vtable; } LRHICopyPassBase;
+typedef struct LRHIResidencySetBase    { const LRHIResidencySetVTable*    vtable; } LRHIResidencySetBase;
+typedef struct LRHISwapChainBase       { const LRHISwapChainVTable*       vtable; } LRHISwapChainBase;
+typedef struct LRHITextureViewBase     { const LRHITextureViewVTable*     vtable; } LRHITextureViewBase;
+typedef struct LRHIRenderPassBase      { const LRHIRenderPassVTable*      vtable; } LRHIRenderPassBase;
+typedef struct LRHIShaderModuleBase    { const LRHIShaderModuleVTable*    vtable; } LRHIShaderModuleBase;
+typedef struct LRHIRenderPipelineBase  { const LRHIRenderPipelineVTable*  vtable; } LRHIRenderPipelineBase;
+typedef struct LRHIMeshPipelineBase    { const LRHIMeshPipelineVTable*    vtable; } LRHIMeshPipelineBase;
+typedef struct LRHIComputePipelineBase { const LRHIComputePipelineVTable* vtable; } LRHIComputePipelineBase;
+typedef struct LRHIComputePassBase     { const LRHIComputePassVTable*     vtable; } LRHIComputePassBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
 void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
 #endif
+
+// Free list implementation for bindless manager
+typedef struct LRHIFreeList {
+    uint64_t max_slots;
+    uint64_t bitmap_size;
+
+    uint64_t* bitmap;
+    uint32_t* free_list;
+} LRHIFreeList;
+
+void lrhi_freelist_init(LRHIFreeList* freelist, uint64_t max_slots);
+void lrhi_freelist_destroy(LRHIFreeList* freelist);
+uint32_t lrhi_freelist_allocate(LRHIFreeList* freelist);
+void lrhi_freelist_free(LRHIFreeList* freelist, uint32_t index);
+void lrhi_freelist_set_bit(LRHIFreeList* freelist, uint32_t index);
+void lrhi_freelist_clear_bit(LRHIFreeList* freelist, uint32_t index);
+uint8_t lrhi_freelist_is_bit_set(LRHIFreeList* freelist, uint32_t index);
 
 #endif // LUMINARY_RHI_INTERNAL_H

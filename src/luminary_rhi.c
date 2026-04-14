@@ -397,3 +397,58 @@ void lrhi_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_g
 {
     ((LRHIRenderPassBase*)render_pass)->vtable->draw_mesh_tasks(render_pass, num_groups_x, num_groups_y, num_groups_z, threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z, threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z, out_error);
 }
+
+void lrhi_create_compute_pipeline(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_compute_pipeline(device, info, out_pipeline, out_error);
+}
+
+void lrhi_destroy_compute_pipeline(LRHIComputePipeline pipeline)
+{
+    ((LRHIComputePipelineBase*)pipeline)->vtable->destroy_compute_pipeline(pipeline);
+}
+
+void lrhi_get_compute_pipeline_info(LRHIComputePipeline pipeline, LRHIComputePipelineInfo* out_info)
+{
+    ((LRHIComputePipelineBase*)pipeline)->vtable->get_compute_pipeline_info(pipeline, out_info);
+}
+
+uint64_t lrhi_compute_pipeline_get_alloc_size(LRHIComputePipeline pipeline, LRHIError* out_error)
+{
+    return ((LRHIComputePipelineBase*)pipeline)->vtable->get_alloc_size(pipeline, out_error);
+}
+
+LRHIComputePass lrhi_compute_pass_begin(LRHICommandList command_list, LRHIError* out_error)
+{
+    return ((LRHICommandListBase*)command_list)->vtable->compute_pass_begin(command_list, out_error);
+}
+
+void lrhi_compute_pass_end(LRHIComputePass compute_pass, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->end(compute_pass, out_error);
+}
+
+void lrhi_compute_pass_barrier(LRHIComputePass compute_pass, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->barrier(compute_pass, out_error);
+}
+
+void lrhi_compute_pass_encoder_barrier(LRHIComputePass compute_pass, LRHIRenderStage after_stage, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->encoder_barrier(compute_pass, after_stage, out_error);
+}
+
+void lrhi_compute_pass_set_pipeline(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->set_pipeline(compute_pass, pipeline, out_error);
+}
+
+void lrhi_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->set_push_constants(compute_pass, data, size, out_error);
+}
+
+void lrhi_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->dispatch(compute_pass, num_groups_x, num_groups_y, num_groups_z, threads_per_group_x, threads_per_group_y, threads_per_group_z, out_error);
+}

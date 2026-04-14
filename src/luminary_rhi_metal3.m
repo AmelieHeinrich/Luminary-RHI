@@ -7,10 +7,24 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+#define MAX_BINDLESS_RESOURCES 100000
+#define MAX_BINDLESS_SAMPLERS 512
+
 #ifndef IR_PRIVATE_IMPLEMENTATION
 #define IR_PRIVATE_IMPLEMENTATION
 #endif
 #include "ext/metal_irconverter_runtime.h"
+
+typedef struct Metal3BindlessManager {
+    id<MTLBuffer> resource_heap_buffer;
+    id<MTLBuffer> sampler_heap_buffer;
+
+    IRDescriptorTableEntry* mapped_resource_heap;
+    IRDescriptorTableEntry* mapped_sampler_heap;
+
+    LRHIFreeList resource_heap_free_list;
+    LRHIFreeList sampler_heap_free_list;
+} Metal3BindlessManager;
 
 typedef struct LRHIMetal3ArgumentBufferData {
     char push_constants[128];
@@ -27,6 +41,8 @@ typedef struct LRHIDeviceMetal3 {
     LRHIDeviceBase base;
     id<MTLDevice> device;
     uint8_t enable_debug;
+
+    Metal3BindlessManager bindless_manager;
 } LRHIDeviceMetal3;
 
 typedef struct LRHITextureMetal3 {
@@ -91,6 +107,8 @@ typedef struct LRHITextureViewMetal3 {
     LRHITextureViewInfo info;
     id<MTLTexture> texture_view;
     uint32_t bindless_index; // For bindless resource indexing, if supported
+
+    Metal3BindlessManager* bindless_manager; // Reference to the device's bindless manager for freeing the index on destruction
 } LRHITextureViewMetal3;
 
 typedef struct LRHIRenderPassMetal3 {
@@ -115,6 +133,8 @@ typedef struct LRHIRenderPipelineMetal3 {
     LRHIRenderPipelineInfo info;
     id<MTLRenderPipelineState> pipeline_state;
     id<MTLDepthStencilState> depth_stencil_state;
+
+    Metal3BindlessManager* bindless_manager;
 } LRHIRenderPipelineMetal3;
 
 typedef struct LRHIMeshPipelineMetal3 {
@@ -122,7 +142,26 @@ typedef struct LRHIMeshPipelineMetal3 {
     LRHIMeshPipelineInfo info;
     id<MTLRenderPipelineState> pipeline_state;
     id<MTLDepthStencilState> depth_stencil_state;
+
+    Metal3BindlessManager* bindless_manager;
 } LRHIMeshPipelineMetal3;
+
+typedef struct LRHIComputePipelineMetal3 {
+    LRHIComputePipelineBase base;
+    LRHIComputePipelineInfo info;
+    id<MTLComputePipelineState> pipeline_state;
+
+    Metal3BindlessManager* bindless_manager;
+} LRHIComputePipelineMetal3;
+
+typedef struct LRHIComputePassMetal3 {
+    LRHIComputePassBase base;
+    id<MTLComputeCommandEncoder> compute_encoder;
+
+    LRHIComputePipeline current_compute_pipeline; // Needed to track current pipeline state for dynamic state emulation
+    LRHICommandListMetal3* command_list;
+    char current_push_constants[128];
+} LRHIComputePassMetal3;
 
 // Forward declarations
 static MTLPixelFormat            lrhi_metal3_pixel_format(LRHITextureFormat format);
@@ -234,6 +273,19 @@ static void            lrhi_metal3_destroy_mesh_pipeline(LRHIMeshPipeline pipeli
 static void            lrhi_metal3_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info);
 static uint64_t        lrhi_metal3_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeline, LRHIError* out_error);
 
+static void            lrhi_metal3_create_compute_pipeline(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error);
+static void            lrhi_metal3_destroy_compute_pipeline(LRHIComputePipeline pipeline);
+static void            lrhi_metal3_get_compute_pipeline_info(LRHIComputePipeline pipeline, LRHIComputePipelineInfo* out_info);
+static uint64_t        lrhi_metal3_compute_pipeline_get_alloc_size(LRHIComputePipeline pipeline, LRHIError* out_error);
+
+static LRHIComputePass lrhi_metal3_compute_pass_begin(LRHICommandList command_list, LRHIError* out_error);
+static void            lrhi_metal3_compute_pass_end(LRHIComputePass compute_pass, LRHIError* out_error);
+static void            lrhi_metal3_compute_pass_barrier(LRHIComputePass compute_pass, LRHIError* out_error);
+static void            lrhi_metal3_compute_pass_encoder_barrier(LRHIComputePass compute_pass, LRHIRenderStage after_stage, LRHIError* out_error);
+static void            lrhi_metal3_compute_pass_set_pipeline(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error);
+static void            lrhi_metal3_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error);
+static void            lrhi_metal3_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal3_device_vtable = {
@@ -251,6 +303,7 @@ static const LRHIDeviceVTable lrhi_metal3_device_vtable = {
     .create_shader_module  = lrhi_metal3_create_shader_module,
     .create_render_pipeline  = lrhi_metal3_create_render_pipeline,
     .create_mesh_pipeline  = lrhi_metal3_create_mesh_pipeline,
+    .create_compute_pipeline = lrhi_metal3_create_compute_pipeline,
 };
 
 static const LRHICommandQueueVTable lrhi_metal3_command_queue_vtable = {
@@ -290,6 +343,7 @@ static const LRHICommandListVTable lrhi_metal3_command_list_vtable = {
     .command_list_reset   = lrhi_metal3_command_list_reset,
     .copy_pass_begin      = lrhi_metal3_command_list_begin_copy_pass,
     .render_pass_begin    = lrhi_metal3_render_pass_begin,
+    .compute_pass_begin   = lrhi_metal3_compute_pass_begin,
 };
 
 static const LRHICopyPassVTable lrhi_metal3_copy_pass_vtable = {
@@ -363,6 +417,58 @@ static const LRHIMeshPipelineVTable lrhi_metal3_mesh_pipeline_vtable = {
     .get_alloc_size = lrhi_metal3_mesh_pipeline_get_alloc_size,
 };
 
+static const LRHIComputePipelineVTable lrhi_metal3_compute_pipeline_vtable = {
+    .destroy_compute_pipeline = lrhi_metal3_destroy_compute_pipeline,
+    .get_compute_pipeline_info = lrhi_metal3_get_compute_pipeline_info,
+    .get_alloc_size = lrhi_metal3_compute_pipeline_get_alloc_size,
+};
+
+static const LRHIComputePassVTable lrhi_metal3_compute_pass_vtable = {
+    .end = lrhi_metal3_compute_pass_end,
+    .barrier = lrhi_metal3_compute_pass_barrier,
+    .encoder_barrier = lrhi_metal3_compute_pass_encoder_barrier,
+    .set_pipeline = lrhi_metal3_compute_pass_set_pipeline,
+    .set_push_constants = lrhi_metal3_compute_pass_set_push_constants,
+    .dispatch = lrhi_metal3_compute_pass_dispatch,
+};
+
+// Bindless manager
+static void lrhi_metal3_bindless_manager_init(Metal3BindlessManager* manager, LRHIDeviceMetal3* device, LRHIError* out_error)
+{
+    manager->resource_heap_buffer = [device->device newBufferWithLength:MAX_BINDLESS_RESOURCES * sizeof(IRDescriptorTableEntry) options:MTLResourceStorageModeShared];
+    manager->mapped_resource_heap = (IRDescriptorTableEntry*)manager->resource_heap_buffer.contents;
+
+    manager->sampler_heap_buffer = [device->device newBufferWithLength:MAX_BINDLESS_SAMPLERS * sizeof(IRDescriptorTableEntry) options:MTLResourceStorageModeShared];
+    manager->mapped_sampler_heap = (IRDescriptorTableEntry*)manager->sampler_heap_buffer.contents;
+
+    // Create free list
+    lrhi_freelist_init(&manager->resource_heap_free_list, MAX_BINDLESS_RESOURCES);
+    lrhi_freelist_init(&manager->sampler_heap_free_list, MAX_BINDLESS_SAMPLERS);
+}
+
+static void lrhi_metal3_bindless_manager_destroy(Metal3BindlessManager* manager)
+{
+    lrhi_freelist_destroy(&manager->resource_heap_free_list);
+    lrhi_freelist_destroy(&manager->sampler_heap_free_list);
+}
+
+static uint32_t lrhi_metal3_bindless_manager_write_texture_view(Metal3BindlessManager* manager, LRHITextureViewMetal3* texture_view, LRHIError* out_error)
+{
+    IRDescriptorTableEntry entry;
+    IRDescriptorTableSetTexture(&entry, texture_view->texture_view, 0.0f, 0);
+
+    uint32_t index = lrhi_freelist_allocate(&manager->resource_heap_free_list);
+    memcpy(&manager->mapped_resource_heap[index], &entry, sizeof(IRDescriptorTableEntry));
+    return index;
+}
+
+// TODO: Write buffer view
+// TODO: Write sampler
+// TODO: Write acceleration structure
+static void lrhi_metal3_bindless_manager_free_resource_view(Metal3BindlessManager* manager, uint32_t index)
+{
+    lrhi_freelist_free(&manager->resource_heap_free_list, index);
+}
 
 // Device
 
@@ -381,11 +487,14 @@ void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
         *out_device = NULL;
         return;
     }
+    lrhi_metal3_bindless_manager_init(&device->bindless_manager, device, out_error);
+
     *out_device = (LRHIDevice)device;
 }
 
 static void lrhi_metal3_destroy_device(LRHIDevice device)
 {
+    lrhi_metal3_bindless_manager_destroy(&((LRHIDeviceMetal3*)device)->bindless_manager);
     free(device);
 }
 
@@ -947,6 +1056,7 @@ static void lrhi_metal3_create_texture_view(LRHIDevice device, LRHITextureViewIn
     // If info is same as base texture, don't create a view.
     // Otherwise, create a new texture view with the same underlying texture but different descriptor.
     LRHITextureMetal3* metal_texture = (LRHITextureMetal3*)info->texture;
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
     if (info->format == LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED) {
         info->format = metal_texture->info.format;
     }
@@ -955,7 +1065,6 @@ static void lrhi_metal3_create_texture_view(LRHIDevice device, LRHITextureViewIn
     LRHITextureViewMetal3* out = malloc(sizeof(LRHITextureViewMetal3));
     out->base.vtable = &lrhi_metal3_texture_view_vtable;
     out->info = *info;
-    out->bindless_index = UINT32_MAX; // TODO: Implement bindless resource indexing
 
     // Validate
     uint8_t is_same_as_base_texture = (info->texture == (LRHITexture)metal_texture) &&
@@ -995,11 +1104,19 @@ static void lrhi_metal3_create_texture_view(LRHIDevice device, LRHITextureViewIn
         *out_texture_view = NULL;
         return;
     }
+
+    if (info->usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || info->usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
+        out->bindless_index = lrhi_metal3_bindless_manager_write_texture_view(&metal_device->bindless_manager, out, out_error);
+    }
     *out_texture_view = (LRHITextureView)out;
 }
 
 static void lrhi_metal3_destroy_texture_view(LRHITextureView texture_view)
 {
+    LRHITextureViewMetal3* metal_texture_view = (LRHITextureViewMetal3*)texture_view;
+    if (metal_texture_view->info.usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || metal_texture_view->info.usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
+        lrhi_metal3_bindless_manager_free_resource_view(metal_texture_view->bindless_manager, metal_texture_view->bindless_index);
+    }
     free(texture_view);
 }
 
@@ -1126,6 +1243,26 @@ static void lrhi_metal3_flush_push_constants(LRHIRenderPassMetal3* render_pass, 
     }
 }
 
+static void lrhi_metal3_flush_push_constants_compute(LRHIComputePassMetal3* render_pass, LRHIError* out_error)
+{
+    LRHICommandListMetal3* cmd = render_pass->command_list;
+
+    if (cmd->push_constant_offset + 256 > (uint32_t)cmd->push_constant_buffer.length) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Push constant linear allocator exhausted");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return;
+    }
+
+    uint32_t offset = cmd->push_constant_offset;
+    LRHIMetal3ArgumentBufferData* slot = (LRHIMetal3ArgumentBufferData*)((uint8_t*)cmd->push_constant_buffer.contents + offset);
+    memcpy(slot->push_constants, render_pass->current_push_constants, 128);
+    cmd->push_constant_offset += 256;
+
+    [render_pass->compute_encoder setBuffer:cmd->push_constant_buffer offset:offset atIndex:kIRArgumentBufferBindPoint];
+}
+
 static void lrhi_metal3_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error)
 {
     LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
@@ -1164,6 +1301,12 @@ static void lrhi_metal3_render_pass_set_render_pipeline(LRHIRenderPass render_pa
     [metal_render_pass->render_encoder setCullMode:lrhi_metal3_cull_mode_to_mtl(metal_pipeline->info.cull_mode)];
     [metal_render_pass->render_encoder setFrontFacingWinding:lrhi_metal3_front_face_to_mtl(metal_pipeline->info.front_face)];
 
+    // Bind resource heaps
+    [metal_render_pass->render_encoder setVertexBuffer:metal_pipeline->bindless_manager->resource_heap_buffer offset:0 atIndex:kIRDescriptorHeapBindPoint];
+    [metal_render_pass->render_encoder setFragmentBuffer:metal_pipeline->bindless_manager->resource_heap_buffer offset:0 atIndex:kIRDescriptorHeapBindPoint];
+    [metal_render_pass->render_encoder setVertexBuffer:metal_pipeline->bindless_manager->sampler_heap_buffer offset:0 atIndex:kIRSamplerHeapBindPoint];
+    [metal_render_pass->render_encoder setFragmentBuffer:metal_pipeline->bindless_manager->sampler_heap_buffer offset:0 atIndex:kIRSamplerHeapBindPoint];
+
     metal_render_pass->current_render_pipeline = pipeline;
 }
 
@@ -1178,6 +1321,16 @@ static void lrhi_metal3_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass
     [metal_render_pass->render_encoder setTriangleFillMode:lrhi_metal3_fill_mode_to_mtl(metal_pipeline->info.fill_mode)];
     [metal_render_pass->render_encoder setCullMode:lrhi_metal3_cull_mode_to_mtl(metal_pipeline->info.cull_mode)];
     [metal_render_pass->render_encoder setFrontFacingWinding:lrhi_metal3_front_face_to_mtl(metal_pipeline->info.front_face)];
+
+    // Bind resource heaps
+    [metal_render_pass->render_encoder setVertexBuffer:metal_pipeline->bindless_manager->resource_heap_buffer offset:0 atIndex:kIRDescriptorHeapBindPoint];
+    [metal_render_pass->render_encoder setFragmentBuffer:metal_pipeline->bindless_manager->resource_heap_buffer offset:0 atIndex:kIRDescriptorHeapBindPoint];
+    [metal_render_pass->render_encoder setObjectBuffer:metal_pipeline->bindless_manager->resource_heap_buffer offset:0 atIndex:kIRDescriptorHeapBindPoint];
+    [metal_render_pass->render_encoder setMeshBuffer:metal_pipeline->bindless_manager->resource_heap_buffer offset:0 atIndex:kIRDescriptorHeapBindPoint];
+    [metal_render_pass->render_encoder setVertexBuffer:metal_pipeline->bindless_manager->sampler_heap_buffer offset:0 atIndex:kIRSamplerHeapBindPoint];
+    [metal_render_pass->render_encoder setFragmentBuffer:metal_pipeline->bindless_manager->sampler_heap_buffer offset:0 atIndex:kIRSamplerHeapBindPoint];
+    [metal_render_pass->render_encoder setObjectBuffer:metal_pipeline->bindless_manager->sampler_heap_buffer offset:0 atIndex:kIRSamplerHeapBindPoint];
+    [metal_render_pass->render_encoder setMeshBuffer:metal_pipeline->bindless_manager->sampler_heap_buffer offset:0 atIndex:kIRSamplerHeapBindPoint];
 }
 
 static void lrhi_metal3_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error)
@@ -1318,6 +1471,7 @@ static void lrhi_metal3_create_render_pipeline(LRHIDevice device, LRHIRenderPipe
     out->pipeline_state = pipeline_state;
     out->depth_stencil_state = depth_stencil_state;
     out->info = *info;
+    out->bindless_manager = &metal_device->bindless_manager;
     *out_pipeline = (LRHIRenderPipeline)out;
 }
 
@@ -1390,6 +1544,7 @@ static void lrhi_metal3_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipeline
     out->pipeline_state = pipeline_state;
     out->depth_stencil_state = depth_stencil_state;
     out->info = *info;
+    out->bindless_manager = &metal_device->bindless_manager;
     *out_pipeline = (LRHIMeshPipeline)out;
 }
 
@@ -1408,6 +1563,127 @@ static uint64_t lrhi_metal3_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeli
 {
     LRHIMeshPipelineMetal3* metal_pipeline = (LRHIMeshPipelineMetal3*)pipeline;
     return (uint64_t)metal_pipeline->pipeline_state.allocatedSize;
+}
+
+// Compute pipeline
+
+static void lrhi_metal3_create_compute_pipeline(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error)
+{
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
+
+    MTLComputePipelineDescriptor* descriptor = [[MTLComputePipelineDescriptor alloc] init];
+    descriptor.computeFunction = ((LRHIShaderModuleMetal3*)info->compute_shader)->function;
+    if (info->supports_indirect_commands) {
+        descriptor.supportIndirectCommandBuffers = YES;
+    }
+
+    NSError* error = nil;
+    id<MTLComputePipelineState> pipeline_state = [metal_device->device newComputePipelineStateWithDescriptor:descriptor options:MTLPipelineOptionNone reflection:nil error:&error];
+    if (!pipeline_state || error) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create compute pipeline: %s", [[error localizedDescription] UTF8String]);
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_pipeline = NULL;
+        return;
+    }
+
+    LRHIComputePipelineMetal3* out = malloc(sizeof(LRHIComputePipelineMetal3));
+    out->base.vtable = &lrhi_metal3_compute_pipeline_vtable;
+    out->pipeline_state = pipeline_state;
+    out->info = *info;
+    out->bindless_manager = &metal_device->bindless_manager;
+    *out_pipeline = (LRHIComputePipeline)out;
+}
+
+static void lrhi_metal3_destroy_compute_pipeline(LRHIComputePipeline pipeline)
+{
+    free(pipeline);
+}
+
+static void lrhi_metal3_get_compute_pipeline_info(LRHIComputePipeline pipeline, LRHIComputePipelineInfo* out_info)
+{
+    LRHIComputePipelineMetal3* metal_pipeline = (LRHIComputePipelineMetal3*)pipeline;
+    *out_info = metal_pipeline->info;
+}
+
+static uint64_t lrhi_metal3_compute_pipeline_get_alloc_size(LRHIComputePipeline pipeline, LRHIError* out_error)
+{
+    LRHIComputePipelineMetal3* metal_pipeline = (LRHIComputePipelineMetal3*)pipeline;
+    return (uint64_t)metal_pipeline->pipeline_state.allocatedSize;
+}
+
+// Compute pass
+
+static LRHIComputePass lrhi_metal3_compute_pass_begin(LRHICommandList command_list, LRHIError* out_error)
+{
+    LRHICommandListMetal3* metal_cmd_list = (LRHICommandListMetal3*)command_list;
+
+    id<MTLComputeCommandEncoder> compute_encoder = [metal_cmd_list->command_buffer computeCommandEncoder];
+    if (!compute_encoder) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create compute command encoder for compute pass");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return NULL;
+    }
+
+    LRHIComputePassMetal3* compute_pass = calloc(1, sizeof(LRHIComputePassMetal3));
+    compute_pass->base.vtable = &lrhi_metal3_compute_pass_vtable;
+    compute_pass->compute_encoder = compute_encoder;
+    compute_pass->command_list = metal_cmd_list;
+    return (LRHIComputePass)compute_pass;
+}
+
+static void lrhi_metal3_compute_pass_end(LRHIComputePass compute_pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
+    [metal_compute_pass->compute_encoder endEncoding];
+    free(metal_compute_pass);
+}
+
+static void lrhi_metal3_compute_pass_barrier(LRHIComputePass compute_pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
+    [metal_compute_pass->compute_encoder memoryBarrierWithScope:MTLBarrierScopeBuffers|MTLBarrierScopeTextures];
+}
+
+static void lrhi_metal3_compute_pass_encoder_barrier(LRHIComputePass compute_pass, LRHIRenderStage after_stage, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
+    [metal_compute_pass->compute_encoder barrierAfterQueueStages:lrhi_metal3_render_stage_to_mtl(after_stage) beforeStages:MTLStageDispatch];
+}
+
+static void lrhi_metal3_compute_pass_set_pipeline(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error)
+{
+    LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
+    LRHIComputePipelineMetal3* metal_pipeline = (LRHIComputePipelineMetal3*)pipeline;
+    [metal_compute_pass->compute_encoder setComputePipelineState:metal_pipeline->pipeline_state];
+
+    // Bind resource heaps
+    [metal_compute_pass->compute_encoder setBuffer:metal_pipeline->bindless_manager->resource_heap_buffer offset:0 atIndex:kIRDescriptorHeapBindPoint];
+    [metal_compute_pass->compute_encoder setBuffer:metal_pipeline->bindless_manager->sampler_heap_buffer offset:0 atIndex:kIRSamplerHeapBindPoint];
+}
+
+static void lrhi_metal3_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
+    uint32_t copy_size = size < 128 ? size : 128;
+    memcpy(metal_compute_pass->current_push_constants, data, copy_size);
+}
+
+static void lrhi_metal3_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error)
+{
+    LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
+
+    lrhi_metal3_flush_push_constants_compute(metal_compute_pass, out_error);
+    if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
+
+    [metal_compute_pass->compute_encoder dispatchThreadgroups:MTLSizeMake(num_groups_x, num_groups_y, num_groups_z) threadsPerThreadgroup:MTLSizeMake(threads_per_group_x, threads_per_group_y, threads_per_group_z)];
 }
 
 // Utils
