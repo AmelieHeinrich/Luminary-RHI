@@ -446,7 +446,9 @@ static uint32_t lrhi_metal4_bindless_manager_find_free_resource(Metal4BindlessMa
 static uint32_t lrhi_metal4_bindless_manager_write_texture_view(Metal4BindlessManager* manager, LRHITextureViewMetal4* texture_view, uint32_t index)
 {
     IRDescriptorTableEntry entry;
-    IRDescriptorTableSetTexture(&entry, texture_view->texture_view, 0.0f, 0);
+    entry.textureViewID = texture_view->bindless_resource_id._impl;
+    entry.gpuVA = 0;
+
     memcpy(&manager->mapped_resource_heap[index], &entry, sizeof(IRDescriptorTableEntry));
     return index;
 }
@@ -1074,14 +1076,15 @@ static void lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewIn
         // If it's not a resource view, go through texture view pool
         if (info->usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || info->usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
             out->bindless_index = lrhi_metal4_bindless_manager_find_free_resource(&metal_device->bindless_manager);
-            out->bindless_resource_id = [metal_device->texture_view_pool setTextureView:metal_texture->texture descriptor:descriptor atIndex:out->bindless_index];
+            out->bindless_resource_id._impl = metal_device->texture_view_pool.baseResourceID._impl + [metal_device->texture_view_pool setTextureView:metal_texture->texture descriptor:descriptor atIndex:out->bindless_index]._impl;
+            lrhi_metal4_bindless_manager_write_texture_view(&metal_device->bindless_manager, out, out->bindless_index);
         } else {
             out->texture_view = [metal_texture->texture newTextureViewWithDescriptor:descriptor];
         }
     } else {
         out->texture_view = metal_texture->texture;
     }
-    if (!out->texture_view) {
+    if (!out->texture_view && out->bindless_index == UINT32_MAX) {
         free(out);
         if (out_error) {
             snprintf(out_error->message, sizeof(out_error->message), "Failed to create texture view");
