@@ -7,6 +7,11 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+#ifndef IR_PRIVATE_IMPLEMENTATION
+#define IR_PRIVATE_IMPLEMENTATION
+#endif
+#include "ext/metal_irconverter_runtime.h"
+
 typedef struct LRHIDeviceMetal3 {
     LRHIDeviceBase base;
     id<MTLDevice> device;
@@ -77,6 +82,8 @@ typedef struct LRHITextureViewMetal3 {
 typedef struct LRHIRenderPassMetal3 {
     LRHIRenderPassBase base;
     id<MTLRenderCommandEncoder> render_encoder;
+
+    LRHIRenderPipeline current_render_pipeline; // Needed to track current pipeline state for dynamic state emulation
 } LRHIRenderPassMetal3;
 
 typedef struct LRHIShaderModuleMetal3 {
@@ -86,15 +93,37 @@ typedef struct LRHIShaderModuleMetal3 {
     id<MTLFunction> function;
 } LRHIShaderModuleMetal3;
 
+typedef struct LRHIRenderPipelineMetal3 {
+    LRHIRenderPipelineBase base;
+    LRHIRenderPipelineInfo info;
+    id<MTLRenderPipelineState> pipeline_state;
+    id<MTLDepthStencilState> depth_stencil_state;
+} LRHIRenderPipelineMetal3;
+
+typedef struct LRHIMeshPipelineMetal3 {
+    LRHIMeshPipelineBase base;
+    LRHIMeshPipelineInfo info;
+    id<MTLRenderPipelineState> pipeline_state;
+    id<MTLDepthStencilState> depth_stencil_state;
+} LRHIMeshPipelineMetal3;
+
 // Forward declarations
-static MTLPixelFormat  lrhi_metal3_pixel_format(LRHITextureFormat format);
-static MTLTextureUsage lrhi_metal3_texture_usage(LRHITextureUsage usage);
-static MTLTextureType  lrhi_metal3_texture_type(LRHITextureDimensions type);
-static void            lrhi_metal3_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error);
-static MTLStages       lrhi_metal3_render_stage_to_mtl(LRHIRenderStage stage);
-static MTLRenderStages lrhi_metal3_render_stages_to_mtl(LRHIRenderStage stages);
-static MTLLoadAction   lrhi_metal3_load_action_to_mtl(LRHIRenderPassAction load_op);
-static MTLStoreAction  lrhi_metal3_store_action_to_mtl(LRHIRenderPassAction store_op);
+static MTLPixelFormat            lrhi_metal3_pixel_format(LRHITextureFormat format);
+static MTLTextureUsage           lrhi_metal3_texture_usage(LRHITextureUsage usage);
+static MTLTextureType            lrhi_metal3_texture_type(LRHITextureDimensions type);
+static void                      lrhi_metal3_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error);
+static MTLStages                 lrhi_metal3_render_stage_to_mtl(LRHIRenderStage stage);
+static MTLRenderStages           lrhi_metal3_render_stages_to_mtl(LRHIRenderStage stages);
+static MTLLoadAction             lrhi_metal3_load_action_to_mtl(LRHIRenderPassAction load_op);
+static MTLStoreAction            lrhi_metal3_store_action_to_mtl(LRHIRenderPassAction store_op);
+static MTLCullMode               lrhi_metal3_cull_mode_to_mtl(LRHIPipelineCullMode cull_mode);
+static MTLTriangleFillMode       lrhi_metal3_fill_mode_to_mtl(LRHIPipelineFillMode fill_mode);
+static MTLWinding                lrhi_metal3_front_face_to_mtl(LRHIPipelineFrontFace front_face);
+static MTLPrimitiveType          lrhi_metal3_primitive_topology_to_mtl(LRHIPipelineTopology topology);
+static MTLPrimitiveTopologyClass lrhi_metal3_primitive_topology_class_to_mtl(LRHIPipelineTopology topology);
+static MTLBlendFactor            lrhi_metal3_blend_factor_to_mtl(LRHIBlendFactor factor);
+static MTLBlendOperation         lrhi_metal3_blend_op_to_mtl(LRHIBlendOperation op);
+static MTLCompareFunction        lrhi_metal3_compare_op_to_mtl(LRHICompareOperation op);
 
 static void            lrhi_metal3_destroy_device(LRHIDevice device);
 static LRHIDeviceInfo  lrhi_metal3_get_device_info(LRHIDevice device);
@@ -164,10 +193,27 @@ static LRHIRenderPass  lrhi_metal3_render_pass_begin(LRHICommandList command_lis
 static void            lrhi_metal3_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
 static void            lrhi_metal3_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal3_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error);
 
 static void            lrhi_metal3_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
 static void            lrhi_metal3_destroy_shader_module(LRHIShaderModule shader_module);
 static void            lrhi_metal3_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info);
+
+static void            lrhi_metal3_create_render_pipeline(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error);
+static void            lrhi_metal3_destroy_render_pipeline(LRHIRenderPipeline pipeline);
+static void            lrhi_metal3_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info);
+static uint64_t        lrhi_metal3_render_pipeline_get_alloc_size(LRHIRenderPipeline pipeline, LRHIError* out_error);
+
+static void            lrhi_metal3_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error);
+static void            lrhi_metal3_destroy_mesh_pipeline(LRHIMeshPipeline pipeline);
+static void            lrhi_metal3_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info);
+static uint64_t        lrhi_metal3_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeline, LRHIError* out_error);
 
 // Vtable instances
 
@@ -184,6 +230,8 @@ static const LRHIDeviceVTable lrhi_metal3_device_vtable = {
     .create_swap_chain     = lrhi_metal3_create_swap_chain,
     .create_texture_view   = lrhi_metal3_create_texture_view,
     .create_shader_module  = lrhi_metal3_create_shader_module,
+    .create_render_pipeline  = lrhi_metal3_create_render_pipeline,
+    .create_mesh_pipeline  = lrhi_metal3_create_mesh_pipeline,
 };
 
 static const LRHICommandQueueVTable lrhi_metal3_command_queue_vtable = {
@@ -269,12 +317,32 @@ static const LRHIRenderPassVTable lrhi_metal3_render_pass_vtable = {
     .end = lrhi_metal3_render_pass_end,
     .intra_barrier = lrhi_metal3_render_pass_intra_barrier,
     .encoder_barrier = lrhi_metal3_render_pass_encoder_barrier,
+    .set_viewport = lrhi_metal3_render_pass_set_viewport,
+    .set_scissor = lrhi_metal3_render_pass_set_scissor,
+    .set_render_pipeline = lrhi_metal3_render_pass_set_render_pipeline,
+    .set_mesh_pipeline = lrhi_metal3_render_pass_set_mesh_pipeline,
+    .draw = lrhi_metal3_render_pass_draw,
+    .draw_indexed = lrhi_metal3_render_pass_draw_indexed,
+    .draw_mesh_tasks = lrhi_metal3_render_pass_draw_mesh_tasks,
 };
 
 static const LRHIShaderModuleVTable lrhi_metal3_shader_module_vtable = {
     .destroy_shader_module = lrhi_metal3_destroy_shader_module,
     .get_shader_module_info = lrhi_metal3_get_shader_module_info,
 };
+
+static const LRHIRenderPipelineVTable lrhi_metal3_render_pipeline_vtable = {
+    .destroy_render_pipeline = lrhi_metal3_destroy_render_pipeline,
+    .get_render_pipeline_info = lrhi_metal3_get_render_pipeline_info,
+    .get_alloc_size = lrhi_metal3_render_pipeline_get_alloc_size,
+};
+
+static const LRHIMeshPipelineVTable lrhi_metal3_mesh_pipeline_vtable = {
+    .destroy_mesh_pipeline = lrhi_metal3_destroy_mesh_pipeline,
+    .get_mesh_pipeline_info = lrhi_metal3_get_mesh_pipeline_info,
+    .get_alloc_size = lrhi_metal3_mesh_pipeline_get_alloc_size,
+};
+
 
 // Device
 
@@ -998,6 +1066,84 @@ static void lrhi_metal3_render_pass_encoder_barrier(LRHIRenderPass render_pass, 
     [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal3_render_stage_to_mtl(beforeStage) beforeStages:lrhi_metal3_render_stage_to_mtl(afterStage)];
 }
 
+static void lrhi_metal3_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    MTLViewport viewport = {
+        .originX = x,
+        .originY = y,
+        .width = width,
+        .height = height,
+        .znear = min_depth,
+        .zfar = max_depth
+    };
+    [metal_render_pass->render_encoder setViewport:viewport];
+}
+
+static void lrhi_metal3_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    MTLScissorRect scissor_rect = {
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height
+    };
+    [metal_render_pass->render_encoder setScissorRect:scissor_rect];
+}
+
+static void lrhi_metal3_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    LRHIRenderPipelineMetal3* metal_pipeline = (LRHIRenderPipelineMetal3*)pipeline;
+    [metal_render_pass->render_encoder setRenderPipelineState:metal_pipeline->pipeline_state];
+    if (metal_pipeline->info.depth_test_enable) {
+        [metal_render_pass->render_encoder setDepthStencilState:metal_pipeline->depth_stencil_state];
+    }
+    [metal_render_pass->render_encoder setTriangleFillMode:lrhi_metal3_fill_mode_to_mtl(metal_pipeline->info.fill_mode)];
+    [metal_render_pass->render_encoder setCullMode:lrhi_metal3_cull_mode_to_mtl(metal_pipeline->info.cull_mode)];
+    [metal_render_pass->render_encoder setFrontFacingWinding:lrhi_metal3_front_face_to_mtl(metal_pipeline->info.front_face)];
+
+    metal_render_pass->current_render_pipeline = pipeline;
+}
+
+static void lrhi_metal3_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    LRHIMeshPipelineMetal3* metal_pipeline = (LRHIMeshPipelineMetal3*)pipeline;
+    [metal_render_pass->render_encoder setRenderPipelineState:metal_pipeline->pipeline_state];
+    if (metal_pipeline->info.depth_test_enable) {
+        [metal_render_pass->render_encoder setDepthStencilState:metal_pipeline->depth_stencil_state];
+    }
+    [metal_render_pass->render_encoder setTriangleFillMode:lrhi_metal3_fill_mode_to_mtl(metal_pipeline->info.fill_mode)];
+    [metal_render_pass->render_encoder setCullMode:lrhi_metal3_cull_mode_to_mtl(metal_pipeline->info.cull_mode)];
+    [metal_render_pass->render_encoder setFrontFacingWinding:lrhi_metal3_front_face_to_mtl(metal_pipeline->info.front_face)];
+}
+
+static void lrhi_metal3_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    MTLPrimitiveType primitive_type = lrhi_metal3_primitive_topology_to_mtl(metal_render_pass->current_render_pipeline ? ((LRHIRenderPipelineMetal3*)metal_render_pass->current_render_pipeline)->info.topology : LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST);
+
+    IRRuntimeDrawPrimitives(metal_render_pass->render_encoder, primitive_type, first_vertex, vertex_count, instance_count, first_instance);
+}
+
+static void lrhi_metal3_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    LRHIBufferMetal3* metal_index_buffer = (LRHIBufferMetal3*)index_buffer;
+
+    MTLPrimitiveType primitive_type = lrhi_metal3_primitive_topology_to_mtl(metal_render_pass->current_render_pipeline ? ((LRHIRenderPipelineMetal3*)metal_render_pass->current_render_pipeline)->info.topology : LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST);
+    MTLIndexType mtl_index_type = (index_stride == 4) ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
+    IRRuntimeDrawIndexedPrimitives(metal_render_pass->render_encoder, primitive_type, index_count, mtl_index_type, metal_index_buffer->buffer, first_index * index_stride, instance_count, vertex_offset, first_instance);
+}
+
+static void lrhi_metal3_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    [metal_render_pass->render_encoder drawMeshThreadgroups:MTLSizeMake(num_groups_x, num_groups_y, num_groups_z) threadsPerObjectThreadgroup:MTLSizeMake(threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z) threadsPerMeshThreadgroup:MTLSizeMake(threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z)];
+}
+
 // Shader module
 
 static void lrhi_metal3_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error)
@@ -1035,6 +1181,162 @@ static void lrhi_metal3_get_shader_module_info(LRHIShaderModule shader_module, L
 {
     LRHIShaderModuleMetal3* metal_shader_module = (LRHIShaderModuleMetal3*)shader_module;
     *out_info = metal_shader_module->info;
+}
+
+// Render pipeline
+
+static void lrhi_metal3_create_render_pipeline(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error)
+{
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
+    
+    MTLRenderPipelineDescriptor* descriptor = [[MTLRenderPipelineDescriptor alloc] init];
+    descriptor.vertexFunction = ((LRHIShaderModuleMetal3*)info->vertex_shader)->function;
+    if (info->fragment_shader) {
+        descriptor.fragmentFunction = ((LRHIShaderModuleMetal3*)info->fragment_shader)->function;
+    }
+    for (uint32_t i = 0; i < info->render_target_count; i++) {
+        descriptor.colorAttachments[i].pixelFormat = lrhi_metal3_pixel_format(info->render_target_formats[i]);
+    }
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        descriptor.depthAttachmentPixelFormat = lrhi_metal3_pixel_format(info->depth_stencil_format);
+        descriptor.stencilAttachmentPixelFormat = lrhi_metal3_pixel_format(info->depth_stencil_format);
+    }
+    descriptor.inputPrimitiveTopology = lrhi_metal3_primitive_topology_class_to_mtl(info->topology);
+    descriptor.rasterizationEnabled = YES;
+    if (info->supports_indirect_commands) {
+        descriptor.supportIndirectCommandBuffers = YES;
+    }
+
+    // Blending
+    for (uint32_t i = 0; i < info->render_target_count; i++) {
+        if (info->blend_enable[i]) {
+            descriptor.colorAttachments[i].blendingEnabled = YES;
+            descriptor.colorAttachments[i].sourceRGBBlendFactor = lrhi_metal3_blend_factor_to_mtl(info->blend_src_rgb_factor[i]);
+            descriptor.colorAttachments[i].destinationRGBBlendFactor = lrhi_metal3_blend_factor_to_mtl(info->blend_dst_rgb_factor[i]);
+            descriptor.colorAttachments[i].rgbBlendOperation = lrhi_metal3_blend_op_to_mtl(info->blend_rgb_op[i]);
+            descriptor.colorAttachments[i].sourceAlphaBlendFactor = lrhi_metal3_blend_factor_to_mtl(info->blend_src_alpha_factor[i]);
+            descriptor.colorAttachments[i].destinationAlphaBlendFactor = lrhi_metal3_blend_factor_to_mtl(info->blend_dst_alpha_factor[i]);
+            descriptor.colorAttachments[i].alphaBlendOperation = lrhi_metal3_blend_op_to_mtl(info->blend_alpha_op[i]);
+        }
+    }
+
+    // Depth stencil state
+    id<MTLDepthStencilState> depth_stencil_state = nil;
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        MTLDepthStencilDescriptor* depth_stencil_descriptor = [[MTLDepthStencilDescriptor alloc] init];
+        depth_stencil_descriptor.depthCompareFunction = lrhi_metal3_compare_op_to_mtl(info->depth_compare_op);
+        depth_stencil_descriptor.depthWriteEnabled = info->depth_write_enable;
+        // TODO: Stencil state
+
+        depth_stencil_state = [metal_device->device newDepthStencilStateWithDescriptor:depth_stencil_descriptor];
+    }
+
+    NSError* error = nil;
+    id<MTLRenderPipelineState> pipeline_state = [metal_device->device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    if (!pipeline_state || error) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create render pipeline: %s", [[error localizedDescription] UTF8String]);
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_pipeline = NULL;
+        return;
+    }
+
+    LRHIRenderPipelineMetal3* out = malloc(sizeof(LRHIRenderPipelineMetal3));
+    out->base.vtable = &lrhi_metal3_render_pipeline_vtable;
+    out->pipeline_state = pipeline_state;
+    out->depth_stencil_state = depth_stencil_state;
+    out->info = *info;
+    *out_pipeline = (LRHIRenderPipeline)out;
+}
+
+static void lrhi_metal3_destroy_render_pipeline(LRHIRenderPipeline pipeline)
+{
+    free(pipeline);
+}
+
+static void lrhi_metal3_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info)
+{
+    LRHIRenderPipelineMetal3* metal_pipeline = (LRHIRenderPipelineMetal3*)pipeline;
+    *out_info = metal_pipeline->info;
+}
+
+static uint64_t lrhi_metal3_render_pipeline_get_alloc_size(LRHIRenderPipeline pipeline, LRHIError* out_error)
+{
+    LRHIRenderPipelineMetal3* metal_pipeline = (LRHIRenderPipelineMetal3*)pipeline;
+    return (uint64_t)metal_pipeline->pipeline_state.allocatedSize;
+}
+
+// Mesh pipeline
+
+static void lrhi_metal3_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error)
+{
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
+    
+    MTLMeshRenderPipelineDescriptor* descriptor = [[MTLMeshRenderPipelineDescriptor alloc] init];
+    if (info->task_shader) {
+        descriptor.objectFunction = ((LRHIShaderModuleMetal3*)info->task_shader)->function;
+    }
+    descriptor.meshFunction = ((LRHIShaderModuleMetal3*)info->mesh_shader)->function;
+    if (info->fragment_shader) {
+        descriptor.fragmentFunction = ((LRHIShaderModuleMetal3*)info->fragment_shader)->function;
+    }
+    for (uint32_t i = 0; i < info->render_target_count; i++) {
+        descriptor.colorAttachments[i].pixelFormat = lrhi_metal3_pixel_format(info->render_target_formats[i]);
+    }
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        descriptor.depthAttachmentPixelFormat = lrhi_metal3_pixel_format(info->depth_stencil_format);
+        descriptor.stencilAttachmentPixelFormat = lrhi_metal3_pixel_format(info->depth_stencil_format);
+    }
+    if (info->supports_indirect_commands) {
+        descriptor.supportIndirectCommandBuffers = YES;
+    }
+
+    // Depth stencil
+    id<MTLDepthStencilState> depth_stencil_state = nil;
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        MTLDepthStencilDescriptor* depth_stencil_descriptor = [[MTLDepthStencilDescriptor alloc] init];
+        depth_stencil_descriptor.depthCompareFunction = lrhi_metal3_compare_op_to_mtl(info->depth_compare_op);
+        depth_stencil_descriptor.depthWriteEnabled = info->depth_write_enable;
+        // TODO: Stencil state
+
+        depth_stencil_state = [metal_device->device newDepthStencilStateWithDescriptor:depth_stencil_descriptor];
+    }
+
+    NSError* error = nil;
+    id<MTLRenderPipelineState> pipeline_state = [metal_device->device newRenderPipelineStateWithMeshDescriptor:descriptor options:MTLPipelineOptionNone reflection:nil error:&error];
+    if (!pipeline_state || error) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create mesh pipeline: %s", [[error localizedDescription] UTF8String]);
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_pipeline = NULL;
+        return;
+    }
+
+    LRHIMeshPipelineMetal3* out = malloc(sizeof(LRHIMeshPipelineMetal3));
+    out->base.vtable = &lrhi_metal3_mesh_pipeline_vtable;
+    out->pipeline_state = pipeline_state;
+    out->depth_stencil_state = depth_stencil_state;
+    out->info = *info;
+    *out_pipeline = (LRHIMeshPipeline)out;
+}
+
+static void lrhi_metal3_destroy_mesh_pipeline(LRHIMeshPipeline pipeline)
+{
+    free(pipeline);
+}
+
+static void lrhi_metal3_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info)
+{
+    LRHIMeshPipelineMetal3* metal_pipeline = (LRHIMeshPipelineMetal3*)pipeline;
+    *out_info = metal_pipeline->info;
+}
+
+static uint64_t lrhi_metal3_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeline, LRHIError* out_error)
+{
+    LRHIMeshPipelineMetal3* metal_pipeline = (LRHIMeshPipelineMetal3*)pipeline;
+    return (uint64_t)metal_pipeline->pipeline_state.allocatedSize;
 }
 
 // Utils
@@ -1124,6 +1426,108 @@ static MTLStoreAction lrhi_metal3_store_action_to_mtl(LRHIRenderPassAction store
         return MTLStoreActionStore;
     }
     return MTLStoreActionDontCare;
+}
+
+static MTLCullMode lrhi_metal3_cull_mode_to_mtl(LRHIPipelineCullMode cull_mode)
+{
+    if (cull_mode == LUMINARY_RHI_PIPELINE_CULL_MODE_NONE) {
+        return MTLCullModeNone;
+    } else if (cull_mode == LUMINARY_RHI_PIPELINE_CULL_MODE_FRONT) {
+        return MTLCullModeFront;
+    } else if (cull_mode == LUMINARY_RHI_PIPELINE_CULL_MODE_BACK) {
+        return MTLCullModeBack;
+    }
+    return MTLCullModeNone;
+}
+
+static MTLTriangleFillMode lrhi_metal3_fill_mode_to_mtl(LRHIPipelineFillMode fill_mode)
+{
+    if (fill_mode == LUMINARY_RHI_PIPELINE_FILL_MODE_SOLID) {
+        return MTLTriangleFillModeFill;
+    } else if (fill_mode == LUMINARY_RHI_PIPELINE_FILL_MODE_WIREFRAME) {
+        return MTLTriangleFillModeLines;
+    }
+    return MTLTriangleFillModeFill;
+}
+
+static MTLWinding lrhi_metal3_front_face_to_mtl(LRHIPipelineFrontFace front_face)
+{
+    if (front_face == LUMINARY_RHI_PIPELINE_FRONT_FACE_CLOCKWISE) {
+        return MTLWindingClockwise;
+    } else if (front_face == LUMINARY_RHI_PIPELINE_FRONT_FACE_COUNTER_CLOCKWISE) {
+        return MTLWindingCounterClockwise;
+    }
+    return MTLWindingClockwise;
+}
+
+static MTLPrimitiveType lrhi_metal3_primitive_topology_to_mtl(LRHIPipelineTopology topology)
+{
+    if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_POINT_LIST) {
+        return MTLPrimitiveTypePoint;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_LINE_LIST) {
+        return MTLPrimitiveTypeLine;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST) {
+        return MTLPrimitiveTypeTriangle;
+    }
+    return MTLPrimitiveTypeTriangle;
+}
+
+static MTLPrimitiveTopologyClass lrhi_metal3_primitive_topology_class_to_mtl(LRHIPipelineTopology topology)
+{
+    if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_POINT_LIST) {
+        return MTLPrimitiveTopologyClassPoint;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_LINE_LIST) {
+        return MTLPrimitiveTopologyClassLine;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST) {
+        return MTLPrimitiveTopologyClassTriangle;
+    }
+    return MTLPrimitiveTopologyClassTriangle;
+}
+
+static MTLBlendFactor lrhi_metal3_blend_factor_to_mtl(LRHIBlendFactor factor)
+{
+    switch (factor) {
+        case LUMINARY_RHI_BLEND_FACTOR_ZERO: return MTLBlendFactorZero;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE: return MTLBlendFactorOne;
+        case LUMINARY_RHI_BLEND_FACTOR_SRC_COLOR: return MTLBlendFactorSourceColor;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_SRC_COLOR: return MTLBlendFactorOneMinusSourceColor;
+        case LUMINARY_RHI_BLEND_FACTOR_DST_COLOR: return MTLBlendFactorDestinationColor;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_DST_COLOR: return MTLBlendFactorOneMinusDestinationColor;
+        case LUMINARY_RHI_BLEND_FACTOR_SRC_ALPHA: return MTLBlendFactorSourceAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA: return MTLBlendFactorOneMinusSourceAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_DST_ALPHA: return MTLBlendFactorDestinationAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_DST_ALPHA: return MTLBlendFactorOneMinusDestinationAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_SRC_ALPHA_SATURATE: return MTLBlendFactorSourceAlphaSaturated;
+        case LUMINARY_RHI_BLEND_FACTOR_BLEND_COLOR: return MTLBlendFactorBlendColor;
+        default: return MTLBlendFactorZero;
+    }
+}
+
+static MTLBlendOperation lrhi_metal3_blend_op_to_mtl(LRHIBlendOperation op)
+{
+    switch (op) {
+        case LUMINARY_RHI_BLEND_OPERATION_ADD: return MTLBlendOperationAdd;
+        case LUMINARY_RHI_BLEND_OPERATION_SUBTRACT: return MTLBlendOperationSubtract;
+        case LUMINARY_RHI_BLEND_OPERATION_REVERSE_SUBTRACT: return MTLBlendOperationReverseSubtract;
+        case LUMINARY_RHI_BLEND_OPERATION_MIN: return MTLBlendOperationMin;
+        case LUMINARY_RHI_BLEND_OPERATION_MAX: return MTLBlendOperationMax;
+        default: return MTLBlendOperationAdd;
+    }
+}
+
+static MTLCompareFunction lrhi_metal3_compare_op_to_mtl(LRHICompareOperation op)
+{
+    switch (op) {
+        case LUMINARY_RHI_COMPARE_OPERATION_NEVER: return MTLCompareFunctionNever;
+        case LUMINARY_RHI_COMPARE_OPERATION_LESS: return MTLCompareFunctionLess;
+        case LUMINARY_RHI_COMPARE_OPERATION_EQUAL: return MTLCompareFunctionEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_LESS_EQUAL: return MTLCompareFunctionLessEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_GREATER: return MTLCompareFunctionGreater;
+        case LUMINARY_RHI_COMPARE_OPERATION_NOT_EQUAL: return MTLCompareFunctionNotEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_GREATER_EQUAL: return MTLCompareFunctionGreaterEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_ALWAYS: return MTLCompareFunctionAlways;
+        default: return MTLCompareFunctionAlways;
+    }
 }
 
 static MTLStages lrhi_metal3_render_stage_to_mtl(LRHIRenderStage stage)

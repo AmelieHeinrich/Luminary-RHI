@@ -3,7 +3,10 @@
 
 #include <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#include <objc/objc.h>
 #include <dispatch/dispatch.h>
+
+#include "ext/metal_irconverter_runtime.h"
 
 typedef struct LRHIDeviceMetal4 {
     LRHIDeviceBase base;
@@ -38,6 +41,10 @@ typedef struct LRHICommandListMetal4 {
     LRHICommandListBase base;
     id<MTL4CommandBuffer> command_buffer;
     id<MTL4CommandAllocator> command_allocator;
+    id<MTL4ArgumentTable> render_argument_table;
+    id<MTL4ArgumentTable> compute_argument_table;
+    id<MTLBuffer> push_constant_buffer;
+    uint32_t push_constant_offset;
 } LRHICommandListMetal4;
 
 typedef struct LRHICopyPassMetal4 {
@@ -69,6 +76,9 @@ typedef struct LRHITextureViewMetal4 {
 typedef struct LRHIRenderPassMetal4 {
     LRHIRenderPassBase base;
     id<MTL4RenderCommandEncoder> render_encoder;
+
+    LRHIRenderPipeline current_render_pipeline;
+    LRHICommandListMetal4* command_list;
 } LRHIRenderPassMetal4;
 
 typedef struct LRHIShaderModuleMetal4 {
@@ -78,14 +88,36 @@ typedef struct LRHIShaderModuleMetal4 {
     id<MTLFunction> function;
 } LRHIShaderModuleMetal4;
 
+typedef struct LRHIRenderPipelineMetal4 {
+    LRHIRenderPipelineBase base;
+    LRHIRenderPipelineInfo info;
+    id<MTLRenderPipelineState> pipeline_state;
+    id<MTLDepthStencilState> depth_stencil_state;
+} LRHIRenderPipelineMetal4;
+
+typedef struct LRHIMeshPipelineMetal4 {
+    LRHIMeshPipelineBase base;
+    LRHIMeshPipelineInfo info;
+    id<MTLRenderPipelineState> pipeline_state;
+    id<MTLDepthStencilState> depth_stencil_state;
+} LRHIMeshPipelineMetal4;
+
 // Forward declarations
-static MTLPixelFormat  lrhi_metal4_pixel_format(LRHITextureFormat format);
-static MTLTextureUsage lrhi_metal4_texture_usage(LRHITextureUsage usage);
-static MTLTextureType  lrhi_metal4_texture_type(LRHITextureDimensions type);
-static void            lrhi_metal4_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error);
-static MTLStages       lrhi_metal4_render_stage_to_mtl(LRHIRenderStage stage);
-static MTLLoadAction   lrhi_metal4_load_action_to_mtl(LRHIRenderPassAction load_op);
-static MTLStoreAction  lrhi_metal4_store_action_to_mtl(LRHIRenderPassAction store_op);
+static MTLPixelFormat            lrhi_metal4_pixel_format(LRHITextureFormat format);
+static MTLTextureUsage           lrhi_metal4_texture_usage(LRHITextureUsage usage);
+static MTLTextureType            lrhi_metal4_texture_type(LRHITextureDimensions type);
+static void                      lrhi_metal4_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error);
+static MTLStages                 lrhi_metal4_render_stage_to_mtl(LRHIRenderStage stage);
+static MTLLoadAction             lrhi_metal4_load_action_to_mtl(LRHIRenderPassAction load_op);
+static MTLStoreAction            lrhi_metal4_store_action_to_mtl(LRHIRenderPassAction store_op);
+static MTLCullMode               lrhi_metal4_cull_mode_to_mtl(LRHIPipelineCullMode cull_mode);
+static MTLTriangleFillMode       lrhi_metal4_fill_mode_to_mtl(LRHIPipelineFillMode fill_mode);
+static MTLWinding                lrhi_metal4_front_face_to_mtl(LRHIPipelineFrontFace front_face);
+static MTLPrimitiveType          lrhi_metal4_primitive_topology_to_mtl(LRHIPipelineTopology topology);
+static MTLPrimitiveTopologyClass lrhi_metal4_primitive_topology_class_to_mtl(LRHIPipelineTopology topology);
+static MTLBlendFactor            lrhi_metal4_blend_factor_to_mtl(LRHIBlendFactor factor);
+static MTLBlendOperation         lrhi_metal4_blend_op_to_mtl(LRHIBlendOperation op);
+static MTLCompareFunction        lrhi_metal4_compare_op_to_mtl(LRHICompareOperation op);
 
 static void            lrhi_metal4_destroy_device(LRHIDevice device);
 static LRHIDeviceInfo  lrhi_metal4_get_device_info(LRHIDevice device);
@@ -152,10 +184,27 @@ static LRHIRenderPass  lrhi_metal4_render_pass_begin(LRHICommandList command_lis
 static void            lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error);
 
 static void            lrhi_metal4_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
 static void            lrhi_metal4_destroy_shader_module(LRHIShaderModule shader_module);
 static void            lrhi_metal4_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info);
+
+static void            lrhi_metal4_create_render_pipeline(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error);
+static void            lrhi_metal4_destroy_render_pipeline(LRHIRenderPipeline pipeline);
+static void            lrhi_metal4_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info);
+static uint64_t        lrhi_metal4_render_pipeline_get_alloc_size(LRHIRenderPipeline pipeline, LRHIError* out_error);
+
+static void            lrhi_metal4_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error);
+static void            lrhi_metal4_destroy_mesh_pipeline(LRHIMeshPipeline pipeline);
+static void            lrhi_metal4_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info);
+static uint64_t        lrhi_metal4_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeline, LRHIError* out_error);
 
 // Vtable instances
 
@@ -172,6 +221,8 @@ static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
     .create_swap_chain    = lrhi_metal4_create_swap_chain,
     .create_texture_view  = lrhi_metal4_create_texture_view,
     .create_shader_module = lrhi_metal4_create_shader_module,
+    .create_render_pipeline = lrhi_metal4_create_render_pipeline,
+    .create_mesh_pipeline = lrhi_metal4_create_mesh_pipeline,
 };
 
 static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
@@ -257,11 +308,30 @@ static const LRHIRenderPassVTable lrhi_metal4_render_pass_vtable = {
     .end = lrhi_metal4_render_pass_end,
     .intra_barrier = lrhi_metal4_render_pass_intra_barrier,
     .encoder_barrier = lrhi_metal4_render_pass_encoder_barrier,
+    .set_viewport = lrhi_metal4_render_pass_set_viewport,
+    .set_scissor = lrhi_metal4_render_pass_set_scissor,
+    .set_render_pipeline = lrhi_metal4_render_pass_set_render_pipeline,
+    .set_mesh_pipeline = lrhi_metal4_render_pass_set_mesh_pipeline,
+    .draw = lrhi_metal4_render_pass_draw,
+    .draw_indexed = lrhi_metal4_render_pass_draw_indexed,
+    .draw_mesh_tasks = lrhi_metal4_render_pass_draw_mesh_tasks,
 };
 
 static const LRHIShaderModuleVTable lrhi_metal4_shader_module_vtable = {
     .destroy_shader_module = lrhi_metal4_destroy_shader_module,
     .get_shader_module_info = lrhi_metal4_get_shader_module_info,
+};
+
+static const LRHIRenderPipelineVTable lrhi_metal4_render_pipeline_vtable = {
+    .destroy_render_pipeline = lrhi_metal4_destroy_render_pipeline,
+    .get_render_pipeline_info = lrhi_metal4_get_render_pipeline_info,
+    .get_alloc_size = lrhi_metal4_render_pipeline_get_alloc_size,
+};
+
+static const LRHIMeshPipelineVTable lrhi_metal4_mesh_pipeline_vtable = {
+    .destroy_mesh_pipeline = lrhi_metal4_destroy_mesh_pipeline,
+    .get_mesh_pipeline_info = lrhi_metal4_get_mesh_pipeline_info,
+    .get_alloc_size = lrhi_metal4_mesh_pipeline_get_alloc_size,
 };
 
 // Device
@@ -598,6 +668,17 @@ static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandL
     out->base.vtable = &lrhi_metal4_command_list_vtable;
     out->command_allocator = command_allocator;
     out->command_buffer = command_buffer;
+    
+    MTL4ArgumentTableDescriptor* argument_table_descriptor = [[MTL4ArgumentTableDescriptor alloc] init];
+    argument_table_descriptor.maxBufferBindCount = 31;
+    argument_table_descriptor.maxTextureBindCount = 31;
+
+    NSError* argument_error = nil;
+    out->render_argument_table = [metal_queue->device newArgumentTableWithDescriptor:argument_table_descriptor error:&argument_error];
+    out->compute_argument_table = [metal_queue->device newArgumentTableWithDescriptor:argument_table_descriptor error:&argument_error];
+    out->push_constant_buffer = [metal_queue->device newBufferWithLength:1024 * 1024 options:MTLResourceStorageModeShared];
+    out->push_constant_offset = 0;
+
     *out_command_list = (LRHICommandList)out;
 }
 
@@ -626,6 +707,7 @@ static void lrhi_metal4_command_list_reset(LRHICommandList command_list, LRHIErr
     (void)out_error;
     LRHICommandListMetal4* metal_cmd_list = (LRHICommandListMetal4*)command_list;
     [metal_cmd_list->command_allocator reset];
+    metal_cmd_list->push_constant_offset = 0;
 }
 
 static LRHICopyPass lrhi_metal4_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error)
@@ -911,6 +993,11 @@ static LRHIRenderPass lrhi_metal4_render_pass_begin(LRHICommandList command_list
     LRHIRenderPassMetal4* render_pass = malloc(sizeof(LRHIRenderPassMetal4));
     render_pass->base.vtable = &lrhi_metal4_render_pass_vtable;
     render_pass->render_encoder = render_encoder;
+    render_pass->current_render_pipeline = NULL;
+    render_pass->command_list = metal_cmd_list;
+    
+    [render_encoder setArgumentTable:metal_cmd_list->render_argument_table atStages:MTLRenderStageVertex | MTLRenderStageFragment];
+    
     return (LRHIRenderPass)render_pass;
 }
 
@@ -932,6 +1019,140 @@ static void lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, 
 {
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
     [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(beforeStage) beforeStages:lrhi_metal4_render_stage_to_mtl(afterStage) visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
+static void lrhi_metal4_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    MTLViewport viewport = {
+        .originX = x,
+        .originY = y,
+        .width = width,
+        .height = height,
+        .znear = min_depth,
+        .zfar = max_depth
+    };
+    [metal_render_pass->render_encoder setViewport:viewport];
+}
+
+static void lrhi_metal4_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    MTLScissorRect scissor_rect = {
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height
+    };
+    [metal_render_pass->render_encoder setScissorRect:scissor_rect];
+}
+
+static void lrhi_metal4_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    LRHIRenderPipelineMetal4* metal_pipeline = (LRHIRenderPipelineMetal4*)pipeline;
+    [metal_render_pass->render_encoder setRenderPipelineState:metal_pipeline->pipeline_state];
+    if (metal_pipeline->info.depth_test_enable) {
+        [metal_render_pass->render_encoder setDepthStencilState:metal_pipeline->depth_stencil_state];
+    }
+    [metal_render_pass->render_encoder setTriangleFillMode:lrhi_metal4_fill_mode_to_mtl(metal_pipeline->info.fill_mode)];
+    [metal_render_pass->render_encoder setCullMode:lrhi_metal4_cull_mode_to_mtl(metal_pipeline->info.cull_mode)];
+    [metal_render_pass->render_encoder setFrontFacingWinding:lrhi_metal4_front_face_to_mtl(metal_pipeline->info.front_face)];
+
+    metal_render_pass->current_render_pipeline = pipeline;
+}
+
+static void lrhi_metal4_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    LRHIMeshPipelineMetal4* metal_pipeline = (LRHIMeshPipelineMetal4*)pipeline;
+    [metal_render_pass->render_encoder setRenderPipelineState:metal_pipeline->pipeline_state];
+    if (metal_pipeline->info.depth_test_enable) {
+        [metal_render_pass->render_encoder setDepthStencilState:metal_pipeline->depth_stencil_state];
+    }
+    [metal_render_pass->render_encoder setTriangleFillMode:lrhi_metal4_fill_mode_to_mtl(metal_pipeline->info.fill_mode)];
+    [metal_render_pass->render_encoder setCullMode:lrhi_metal4_cull_mode_to_mtl(metal_pipeline->info.cull_mode)];
+    [metal_render_pass->render_encoder setFrontFacingWinding:lrhi_metal4_front_face_to_mtl(metal_pipeline->info.front_face)];
+}
+
+static void lrhi_metal4_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    LRHICommandListMetal4* metal_cmd_list = metal_render_pass->command_list;
+    MTLPrimitiveType primitive_type = lrhi_metal4_primitive_topology_to_mtl(metal_render_pass->current_render_pipeline ? ((LRHIRenderPipelineMetal4*)metal_render_pass->current_render_pipeline)->info.topology : LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST);
+
+    // TODO: Check for if we're using a Metal Shader Converter pipeline or not.
+    uint32_t required_size = sizeof(IRRuntimeDrawParams);
+    required_size = (required_size + 255) & ~255;
+    
+    if (metal_cmd_list->push_constant_offset + required_size <= metal_cmd_list->push_constant_buffer.length) {
+        IRRuntimeDrawParams* draw_arg = (IRRuntimeDrawParams*)((uint8_t*)metal_cmd_list->push_constant_buffer.contents + metal_cmd_list->push_constant_offset);
+        draw_arg->draw.vertexCountPerInstance = vertex_count;
+        draw_arg->draw.instanceCount = instance_count;
+        draw_arg->draw.startVertexLocation = first_vertex;
+        draw_arg->draw.startInstanceLocation = first_instance;
+        
+        [metal_cmd_list->render_argument_table setAddress:metal_cmd_list->push_constant_buffer.gpuAddress + metal_cmd_list->push_constant_offset atIndex:kIRArgumentBufferDrawArgumentsBindPoint];
+        metal_cmd_list->push_constant_offset += required_size;
+    }
+    
+    uint32_t draw_type_size = sizeof(uint16_t);
+    draw_type_size = (draw_type_size + 255) & ~255;
+    
+    if (metal_cmd_list->push_constant_offset + draw_type_size <= metal_cmd_list->push_constant_buffer.length) {
+        uint16_t* draw_type_ptr = (uint16_t*)((uint8_t*)metal_cmd_list->push_constant_buffer.contents + metal_cmd_list->push_constant_offset);
+        *draw_type_ptr = kIRNonIndexedDraw;
+        
+        [metal_cmd_list->render_argument_table setAddress:metal_cmd_list->push_constant_buffer.gpuAddress + metal_cmd_list->push_constant_offset atIndex:kIRArgumentBufferUniformsBindPoint];
+        metal_cmd_list->push_constant_offset += draw_type_size;
+    }
+
+    [metal_render_pass->render_encoder drawPrimitives:primitive_type vertexStart:first_vertex vertexCount:vertex_count instanceCount:instance_count baseInstance:first_instance];
+}
+
+static void lrhi_metal4_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    LRHIBufferMetal4* metal_index_buffer = (LRHIBufferMetal4*)index_buffer;
+    LRHICommandListMetal4* metal_cmd_list = metal_render_pass->command_list;
+
+    MTLPrimitiveType primitive_type = lrhi_metal4_primitive_topology_to_mtl(metal_render_pass->current_render_pipeline ? ((LRHIRenderPipelineMetal4*)metal_render_pass->current_render_pipeline)->info.topology : LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST);
+    MTLIndexType mtl_index_type = (index_stride == 4) ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
+    
+    // TODO: Check for if we're using a Metal Shader Converter pipeline or not.
+    uint32_t required_size = sizeof(IRRuntimeDrawParams);
+    required_size = (required_size + 255) & ~255;
+    
+    if (metal_cmd_list->push_constant_offset + required_size <= metal_cmd_list->push_constant_buffer.length) {
+        IRRuntimeDrawParams* draw_arg = (IRRuntimeDrawParams*)((uint8_t*)metal_cmd_list->push_constant_buffer.contents + metal_cmd_list->push_constant_offset);
+        draw_arg->drawIndexed.indexCountPerInstance = index_count;
+        draw_arg->drawIndexed.instanceCount = instance_count;
+        draw_arg->drawIndexed.baseVertexLocation = vertex_offset;
+        draw_arg->drawIndexed.startInstanceLocation = first_instance;
+        draw_arg->drawIndexed.startIndexLocation = first_index;
+        
+        [metal_cmd_list->render_argument_table setAddress:metal_cmd_list->push_constant_buffer.gpuAddress + metal_cmd_list->push_constant_offset atIndex:kIRArgumentBufferDrawArgumentsBindPoint];
+        metal_cmd_list->push_constant_offset += required_size;
+    }
+    
+    uint32_t draw_type_size = sizeof(uint16_t);
+    draw_type_size = (draw_type_size + 255) & ~255;
+    
+    if (metal_cmd_list->push_constant_offset + draw_type_size <= metal_cmd_list->push_constant_buffer.length) {
+        uint16_t* draw_type_ptr = (uint16_t*)((uint8_t*)metal_cmd_list->push_constant_buffer.contents + metal_cmd_list->push_constant_offset);
+        *draw_type_ptr = mtl_index_type + 1;
+        
+        [metal_cmd_list->render_argument_table setAddress:metal_cmd_list->push_constant_buffer.gpuAddress + metal_cmd_list->push_constant_offset atIndex:kIRArgumentBufferUniformsBindPoint];
+        metal_cmd_list->push_constant_offset += draw_type_size;
+    }
+
+    [metal_render_pass->render_encoder drawIndexedPrimitives:primitive_type indexCount:index_count indexType:mtl_index_type indexBuffer:metal_index_buffer->buffer.gpuAddress + (first_index * index_stride) indexBufferLength:metal_index_buffer->buffer.allocatedSize - (first_index * index_stride) instanceCount:instance_count baseVertex:vertex_offset baseInstance:first_instance];
+}
+
+static void lrhi_metal4_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error)
+{
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    [metal_render_pass->render_encoder drawMeshThreadgroups:MTLSizeMake(num_groups_x, num_groups_y, num_groups_z) threadsPerObjectThreadgroup:MTLSizeMake(threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z) threadsPerMeshThreadgroup:MTLSizeMake(threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z)];
 }
 
 // Shader module
@@ -973,6 +1194,262 @@ static void lrhi_metal4_get_shader_module_info(LRHIShaderModule shader_module, L
     *out_info = metal_shader_module->info;
 }
 
+// Render pipeline
+
+static void lrhi_metal4_create_render_pipeline(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error)
+{
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
+    
+    MTLRenderPipelineDescriptor* descriptor = [[MTLRenderPipelineDescriptor alloc] init];
+    descriptor.vertexFunction = ((LRHIShaderModuleMetal4*)info->vertex_shader)->function;
+    if (info->fragment_shader) {
+        descriptor.fragmentFunction = ((LRHIShaderModuleMetal4*)info->fragment_shader)->function;
+    }
+    for (uint32_t i = 0; i < info->render_target_count; i++) {
+        descriptor.colorAttachments[i].pixelFormat = lrhi_metal4_pixel_format(info->render_target_formats[i]);
+    }
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        descriptor.depthAttachmentPixelFormat = lrhi_metal4_pixel_format(info->depth_stencil_format);
+        descriptor.stencilAttachmentPixelFormat = lrhi_metal4_pixel_format(info->depth_stencil_format);
+    }
+    descriptor.inputPrimitiveTopology = lrhi_metal4_primitive_topology_class_to_mtl(info->topology);
+    descriptor.rasterizationEnabled = YES;
+    if (info->supports_indirect_commands) {
+        descriptor.supportIndirectCommandBuffers = YES;
+    }
+
+    // Blending
+    for (uint32_t i = 0; i < info->render_target_count; i++) {
+        if (info->blend_enable[i]) {
+            descriptor.colorAttachments[i].blendingEnabled = YES;
+            descriptor.colorAttachments[i].sourceRGBBlendFactor = lrhi_metal4_blend_factor_to_mtl(info->blend_src_rgb_factor[i]);
+            descriptor.colorAttachments[i].destinationRGBBlendFactor = lrhi_metal4_blend_factor_to_mtl(info->blend_dst_rgb_factor[i]);
+            descriptor.colorAttachments[i].rgbBlendOperation = lrhi_metal4_blend_op_to_mtl(info->blend_rgb_op[i]);
+            descriptor.colorAttachments[i].sourceAlphaBlendFactor = lrhi_metal4_blend_factor_to_mtl(info->blend_src_alpha_factor[i]);
+            descriptor.colorAttachments[i].destinationAlphaBlendFactor = lrhi_metal4_blend_factor_to_mtl(info->blend_dst_alpha_factor[i]);
+            descriptor.colorAttachments[i].alphaBlendOperation = lrhi_metal4_blend_op_to_mtl(info->blend_alpha_op[i]);
+        }
+    }
+
+    // Depth stencil state
+    id<MTLDepthStencilState> depth_stencil_state = nil;
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        MTLDepthStencilDescriptor* depth_stencil_descriptor = [[MTLDepthStencilDescriptor alloc] init];
+        depth_stencil_descriptor.depthCompareFunction = lrhi_metal4_compare_op_to_mtl(info->depth_compare_op);
+        depth_stencil_descriptor.depthWriteEnabled = info->depth_write_enable;
+        // TODO: Stencil state
+
+        depth_stencil_state = [metal_device->device newDepthStencilStateWithDescriptor:depth_stencil_descriptor];
+    }
+
+    NSError* error = nil;
+    id<MTLRenderPipelineState> pipeline_state = [metal_device->device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    if (!pipeline_state || error) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create render pipeline: %s", [[error localizedDescription] UTF8String]);
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_pipeline = NULL;
+        return;
+    }
+
+    LRHIRenderPipelineMetal4* out = malloc(sizeof(LRHIRenderPipelineMetal4));
+    out->base.vtable = &lrhi_metal4_render_pipeline_vtable;
+    out->pipeline_state = pipeline_state;
+    out->depth_stencil_state = depth_stencil_state;
+    out->info = *info;
+    *out_pipeline = (LRHIRenderPipeline)out;
+}
+
+static void lrhi_metal4_destroy_render_pipeline(LRHIRenderPipeline pipeline)
+{
+    free(pipeline);
+}
+
+static void lrhi_metal4_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info)
+{
+    LRHIRenderPipelineMetal4* metal_pipeline = (LRHIRenderPipelineMetal4*)pipeline;
+    *out_info = metal_pipeline->info;
+}
+
+static uint64_t lrhi_metal4_render_pipeline_get_alloc_size(LRHIRenderPipeline pipeline, LRHIError* out_error)
+{
+    LRHIRenderPipelineMetal4* metal_pipeline = (LRHIRenderPipelineMetal4*)pipeline;
+    return (uint64_t)metal_pipeline->pipeline_state.allocatedSize;
+}
+
+// Mesh pipeline
+
+static void lrhi_metal4_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error)
+{
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
+    
+    MTLMeshRenderPipelineDescriptor* descriptor = [[MTLMeshRenderPipelineDescriptor alloc] init];
+    if (info->task_shader) {
+        descriptor.objectFunction = ((LRHIShaderModuleMetal4*)info->task_shader)->function;
+    }
+    descriptor.meshFunction = ((LRHIShaderModuleMetal4*)info->mesh_shader)->function;
+    if (info->fragment_shader) {
+        descriptor.fragmentFunction = ((LRHIShaderModuleMetal4*)info->fragment_shader)->function;
+    }
+    for (uint32_t i = 0; i < info->render_target_count; i++) {
+        descriptor.colorAttachments[i].pixelFormat = lrhi_metal4_pixel_format(info->render_target_formats[i]);
+    }
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        descriptor.depthAttachmentPixelFormat = lrhi_metal4_pixel_format(info->depth_stencil_format);
+        descriptor.stencilAttachmentPixelFormat = lrhi_metal4_pixel_format(info->depth_stencil_format);
+    }
+    if (info->supports_indirect_commands) {
+        descriptor.supportIndirectCommandBuffers = YES;
+    }
+
+    // Depth stencil
+    id<MTLDepthStencilState> depth_stencil_state = nil;
+    if (info->depth_test_enable || info->stencil_test_enable) {
+        MTLDepthStencilDescriptor* depth_stencil_descriptor = [[MTLDepthStencilDescriptor alloc] init];
+        depth_stencil_descriptor.depthCompareFunction = lrhi_metal4_compare_op_to_mtl(info->depth_compare_op);
+        depth_stencil_descriptor.depthWriteEnabled = info->depth_write_enable;
+        // TODO: Stencil state
+
+        depth_stencil_state = [metal_device->device newDepthStencilStateWithDescriptor:depth_stencil_descriptor];
+    }
+
+    NSError* error = nil;
+    id<MTLRenderPipelineState> pipeline_state = [metal_device->device newRenderPipelineStateWithMeshDescriptor:descriptor options:MTLPipelineOptionNone reflection:nil error:&error];
+    if (!pipeline_state || error) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create mesh pipeline: %s", [[error localizedDescription] UTF8String]);
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_pipeline = NULL;
+        return;
+    }
+
+    LRHIMeshPipelineMetal4* out = malloc(sizeof(LRHIMeshPipelineMetal4));
+    out->base.vtable = &lrhi_metal4_mesh_pipeline_vtable;
+    out->pipeline_state = pipeline_state;
+    out->depth_stencil_state = depth_stencil_state;
+    out->info = *info;
+    *out_pipeline = (LRHIMeshPipeline)out;
+}
+
+static void lrhi_metal4_destroy_mesh_pipeline(LRHIMeshPipeline pipeline)
+{
+    free(pipeline);
+}
+
+static void lrhi_metal4_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info)
+{
+    LRHIMeshPipelineMetal4* metal_pipeline = (LRHIMeshPipelineMetal4*)pipeline;
+    *out_info = metal_pipeline->info;
+}
+
+static uint64_t lrhi_metal4_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeline, LRHIError* out_error)
+{
+    LRHIMeshPipelineMetal4* metal_pipeline = (LRHIMeshPipelineMetal4*)pipeline;
+    return (uint64_t)metal_pipeline->pipeline_state.allocatedSize;
+}
+
+// Swap chain
+
+static void lrhi_metal4_create_swap_chain(LRHIDevice device, LRHICommandQueue queue,
+                                           LRHISwapChainInfo* info,
+                                           LRHISwapChain* out_swap_chain,
+                                           LRHIError* out_error)
+{
+    (void)device;
+
+    if (info->handle_type != LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message),
+                     "Metal4 swap chain only supports METAL_LAYER handle type");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_swap_chain = NULL;
+        return;
+    }
+
+    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
+    CAMetalLayer* layer = (__bridge CAMetalLayer*)info->handle.metal_layer;
+
+    uint8_t max_fif = info->max_frames_in_flight > 0 ? info->max_frames_in_flight : 2;
+    layer.pixelFormat          = lrhi_metal4_pixel_format(info->format);
+    layer.drawableSize         = CGSizeMake(info->width, info->height);
+    layer.framebufferOnly      = NO;
+    layer.maximumDrawableCount = (max_fif <= 3) ? max_fif : 3;  // CAMetalLayer caps at 3
+
+    LRHISwapChainMetal4* sc = malloc(sizeof(LRHISwapChainMetal4));
+    sc->base.vtable      = &lrhi_metal4_swap_chain_vtable;
+    sc->layer            = layer;
+    sc->queue            = metal_queue->queue;
+    sc->current_drawable = nil;
+    sc->info             = *info;
+
+    sc->current_texture.base.vtable = &lrhi_metal4_swap_chain_texture_vtable;
+    sc->current_texture.texture     = nil;
+    sc->current_texture.info        = (LRHITextureInfo){
+        .width        = info->width,
+        .height       = info->height,
+        .depth        = 1,
+        .mip_levels   = 1,
+        .array_layers = 1,
+        .format       = info->format,
+        .usage        = LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET,
+        .dimensions   = LUMINARY_RHI_TEXTURE_DIMENSIONS_2D,
+    };
+
+    *out_swap_chain = (LRHISwapChain)sc;
+}
+
+static void lrhi_metal4_destroy_swap_chain(LRHISwapChain swap_chain)
+{
+    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
+    sc->current_drawable = nil;
+    free(sc);
+}
+
+static LRHITexture lrhi_metal4_swap_chain_get_current_texture(LRHISwapChain swap_chain,
+                                                               LRHIError* out_error)
+{
+    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
+    sc->current_drawable = nil;  // discard any un-presented drawable
+
+    id<CAMetalDrawable> drawable = [sc->layer nextDrawable];
+    if (!drawable) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message),
+                     "Metal4: nextDrawable returned nil");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return NULL;
+    }
+
+    sc->current_drawable        = drawable;
+    sc->current_texture.texture = drawable.texture;
+    return (LRHITexture)&sc->current_texture;
+}
+
+static void lrhi_metal4_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error)
+{
+    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
+    if (!sc->current_drawable) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message),
+                     "Metal4: present called with no current drawable");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
+        }
+        return;
+    }
+    // Both are GPU-timeline events enqueued on the command queue after all rendering commands:
+    // waitForDrawable: ensures the display has finished reading this drawable before the GPU re-uses it
+    // signalDrawable:  signals the display system that rendering into this drawable is complete
+    [sc->queue waitForDrawable:sc->current_drawable];
+    [sc->queue signalDrawable:sc->current_drawable];
+    [sc->current_drawable present];
+    sc->current_drawable        = nil;
+    sc->current_texture.texture = nil;
+}
+
 // Utils
 
 static MTLStages lrhi_metal4_render_stage_to_mtl(LRHIRenderStage stage)
@@ -1006,6 +1483,108 @@ static MTLStoreAction lrhi_metal4_store_action_to_mtl(LRHIRenderPassAction store
         return MTLStoreActionStore;
     }
     return MTLStoreActionDontCare;
+}
+
+static MTLCullMode lrhi_metal4_cull_mode_to_mtl(LRHIPipelineCullMode cull_mode)
+{
+    if (cull_mode == LUMINARY_RHI_PIPELINE_CULL_MODE_NONE) {
+        return MTLCullModeNone;
+    } else if (cull_mode == LUMINARY_RHI_PIPELINE_CULL_MODE_FRONT) {
+        return MTLCullModeFront;
+    } else if (cull_mode == LUMINARY_RHI_PIPELINE_CULL_MODE_BACK) {
+        return MTLCullModeBack;
+    }
+    return MTLCullModeNone;
+}
+
+static MTLTriangleFillMode lrhi_metal4_fill_mode_to_mtl(LRHIPipelineFillMode fill_mode)
+{
+    if (fill_mode == LUMINARY_RHI_PIPELINE_FILL_MODE_SOLID) {
+        return MTLTriangleFillModeFill;
+    } else if (fill_mode == LUMINARY_RHI_PIPELINE_FILL_MODE_WIREFRAME) {
+        return MTLTriangleFillModeLines;
+    }
+    return MTLTriangleFillModeFill;
+}
+
+static MTLWinding lrhi_metal4_front_face_to_mtl(LRHIPipelineFrontFace front_face)
+{
+    if (front_face == LUMINARY_RHI_PIPELINE_FRONT_FACE_CLOCKWISE) {
+        return MTLWindingClockwise;
+    } else if (front_face == LUMINARY_RHI_PIPELINE_FRONT_FACE_COUNTER_CLOCKWISE) {
+        return MTLWindingCounterClockwise;
+    }
+    return MTLWindingClockwise;
+}
+
+static MTLPrimitiveType lrhi_metal4_primitive_topology_to_mtl(LRHIPipelineTopology topology)
+{
+    if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_POINT_LIST) {
+        return MTLPrimitiveTypePoint;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_LINE_LIST) {
+        return MTLPrimitiveTypeLine;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST) {
+        return MTLPrimitiveTypeTriangle;
+    }
+    return MTLPrimitiveTypeTriangle;
+}
+
+static MTLPrimitiveTopologyClass lrhi_metal4_primitive_topology_class_to_mtl(LRHIPipelineTopology topology)
+{
+    if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_POINT_LIST) {
+        return MTLPrimitiveTopologyClassPoint;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_LINE_LIST) {
+        return MTLPrimitiveTopologyClassLine;
+    } else if (topology == LUMINARY_RHI_PIPELINE_TOPOLOGY_TRIANGLE_LIST) {
+        return MTLPrimitiveTopologyClassTriangle;
+    }
+    return MTLPrimitiveTopologyClassTriangle;
+}
+
+static MTLBlendFactor lrhi_metal4_blend_factor_to_mtl(LRHIBlendFactor factor)
+{
+    switch (factor) {
+        case LUMINARY_RHI_BLEND_FACTOR_ZERO: return MTLBlendFactorZero;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE: return MTLBlendFactorOne;
+        case LUMINARY_RHI_BLEND_FACTOR_SRC_COLOR: return MTLBlendFactorSourceColor;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_SRC_COLOR: return MTLBlendFactorOneMinusSourceColor;
+        case LUMINARY_RHI_BLEND_FACTOR_DST_COLOR: return MTLBlendFactorDestinationColor;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_DST_COLOR: return MTLBlendFactorOneMinusDestinationColor;
+        case LUMINARY_RHI_BLEND_FACTOR_SRC_ALPHA: return MTLBlendFactorSourceAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA: return MTLBlendFactorOneMinusSourceAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_DST_ALPHA: return MTLBlendFactorDestinationAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_DST_ALPHA: return MTLBlendFactorOneMinusDestinationAlpha;
+        case LUMINARY_RHI_BLEND_FACTOR_SRC_ALPHA_SATURATE: return MTLBlendFactorSourceAlphaSaturated;
+        case LUMINARY_RHI_BLEND_FACTOR_BLEND_COLOR: return MTLBlendFactorBlendColor;
+        default: return MTLBlendFactorZero;
+    }
+}
+
+static MTLBlendOperation lrhi_metal4_blend_op_to_mtl(LRHIBlendOperation op)
+{
+    switch (op) {
+        case LUMINARY_RHI_BLEND_OPERATION_ADD: return MTLBlendOperationAdd;
+        case LUMINARY_RHI_BLEND_OPERATION_SUBTRACT: return MTLBlendOperationSubtract;
+        case LUMINARY_RHI_BLEND_OPERATION_REVERSE_SUBTRACT: return MTLBlendOperationReverseSubtract;
+        case LUMINARY_RHI_BLEND_OPERATION_MIN: return MTLBlendOperationMin;
+        case LUMINARY_RHI_BLEND_OPERATION_MAX: return MTLBlendOperationMax;
+        default: return MTLBlendOperationAdd;
+    }
+}
+
+static MTLCompareFunction lrhi_metal4_compare_op_to_mtl(LRHICompareOperation op)
+{
+    switch (op) {
+        case LUMINARY_RHI_COMPARE_OPERATION_NEVER: return MTLCompareFunctionNever;
+        case LUMINARY_RHI_COMPARE_OPERATION_LESS: return MTLCompareFunctionLess;
+        case LUMINARY_RHI_COMPARE_OPERATION_EQUAL: return MTLCompareFunctionEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_LESS_EQUAL: return MTLCompareFunctionLessEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_GREATER: return MTLCompareFunctionGreater;
+        case LUMINARY_RHI_COMPARE_OPERATION_NOT_EQUAL: return MTLCompareFunctionNotEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_GREATER_EQUAL: return MTLCompareFunctionGreaterEqual;
+        case LUMINARY_RHI_COMPARE_OPERATION_ALWAYS: return MTLCompareFunctionAlways;
+        default: return MTLCompareFunctionAlways;
+    }
 }
 
 static void lrhi_metal4_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error)
@@ -1124,104 +1703,4 @@ static MTLTextureType lrhi_metal4_texture_type(LRHITextureDimensions type)
         case LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE:     return MTLTextureTypeCube;
         default:                                       return MTLTextureType2D;
     }
-}
-
-// Swap chain
-
-static void lrhi_metal4_create_swap_chain(LRHIDevice device, LRHICommandQueue queue,
-                                           LRHISwapChainInfo* info,
-                                           LRHISwapChain* out_swap_chain,
-                                           LRHIError* out_error)
-{
-    (void)device;
-
-    if (info->handle_type != LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER) {
-        if (out_error) {
-            snprintf(out_error->message, sizeof(out_error->message),
-                     "Metal4 swap chain only supports METAL_LAYER handle type");
-            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
-        }
-        *out_swap_chain = NULL;
-        return;
-    }
-
-    LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
-    CAMetalLayer* layer = (__bridge CAMetalLayer*)info->handle.metal_layer;
-
-    uint8_t max_fif = info->max_frames_in_flight > 0 ? info->max_frames_in_flight : 2;
-    layer.pixelFormat          = lrhi_metal4_pixel_format(info->format);
-    layer.drawableSize         = CGSizeMake(info->width, info->height);
-    layer.framebufferOnly      = NO;
-    layer.maximumDrawableCount = (max_fif <= 3) ? max_fif : 3;  // CAMetalLayer caps at 3
-
-    LRHISwapChainMetal4* sc = malloc(sizeof(LRHISwapChainMetal4));
-    sc->base.vtable      = &lrhi_metal4_swap_chain_vtable;
-    sc->layer            = layer;
-    sc->queue            = metal_queue->queue;
-    sc->current_drawable = nil;
-    sc->info             = *info;
-
-    sc->current_texture.base.vtable = &lrhi_metal4_swap_chain_texture_vtable;
-    sc->current_texture.texture     = nil;
-    sc->current_texture.info        = (LRHITextureInfo){
-        .width        = info->width,
-        .height       = info->height,
-        .depth        = 1,
-        .mip_levels   = 1,
-        .array_layers = 1,
-        .format       = info->format,
-        .usage        = LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET,
-        .dimensions   = LUMINARY_RHI_TEXTURE_DIMENSIONS_2D,
-    };
-
-    *out_swap_chain = (LRHISwapChain)sc;
-}
-
-static void lrhi_metal4_destroy_swap_chain(LRHISwapChain swap_chain)
-{
-    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
-    sc->current_drawable = nil;
-    free(sc);
-}
-
-static LRHITexture lrhi_metal4_swap_chain_get_current_texture(LRHISwapChain swap_chain,
-                                                               LRHIError* out_error)
-{
-    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
-    sc->current_drawable = nil;  // discard any un-presented drawable
-
-    id<CAMetalDrawable> drawable = [sc->layer nextDrawable];
-    if (!drawable) {
-        if (out_error) {
-            snprintf(out_error->message, sizeof(out_error->message),
-                     "Metal4: nextDrawable returned nil");
-            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
-        }
-        return NULL;
-    }
-
-    sc->current_drawable        = drawable;
-    sc->current_texture.texture = drawable.texture;
-    return (LRHITexture)&sc->current_texture;
-}
-
-static void lrhi_metal4_swap_chain_present(LRHISwapChain swap_chain, LRHIError* out_error)
-{
-    LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
-    if (!sc->current_drawable) {
-        if (out_error) {
-            snprintf(out_error->message, sizeof(out_error->message),
-                     "Metal4: present called with no current drawable");
-            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
-        }
-        return;
-    }
-    // Both are GPU-timeline events enqueued on the command queue after all rendering commands:
-    // waitForDrawable: ensures the display has finished reading this drawable before the GPU re-uses it
-    // signalDrawable:  signals the display system that rendering into this drawable is complete
-    [sc->queue waitForDrawable:sc->current_drawable];
-    [sc->queue signalDrawable:sc->current_drawable];
-    [sc->current_drawable present];
-    sc->current_drawable        = nil;
-    sc->current_texture.texture = nil;
 }

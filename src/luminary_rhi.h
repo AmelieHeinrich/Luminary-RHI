@@ -112,18 +112,28 @@ typedef enum LRHICompareOperation {
 #define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
 #define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
 
-#define LUMINARY_BLEND_FACTOR_ZERO 0
-#define LUMINARY_BLEND_FACTOR_ONE 1
-#define LUMINARY_BLEND_FACTOR_SRC_COLOR 2
-#define LUMINARY_BLEND_FACTOR_ONE_MINUS_SRC_COLOR 3
-#define LUMINARY_BLEND_FACTOR_DST_COLOR 4
-#define LUMINARY_BLEND_FACTOR_ONE_MINUS_DST_COLOR 5
-#define LUMINARY_BLEND_FACTOR_SRC_ALPHA 6
-#define LUMINARY_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA 7
-#define LUMINARY_BLEND_FACTOR_DST_ALPHA 8
-#define LUMINARY_BLEND_FACTOR_ONE_MINUS_DST_ALPHA 9
-#define LUMINARY_BLEND_FACTOR_SRC_ALPHA_SATURATE 10
-#define LUMINARY_BLEND_FACTOR_BLEND_COLOR 11
+typedef enum LRHIBlendFactor {
+    LUMINARY_RHI_BLEND_FACTOR_ZERO,
+    LUMINARY_RHI_BLEND_FACTOR_ONE,
+    LUMINARY_RHI_BLEND_FACTOR_SRC_COLOR,
+    LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
+    LUMINARY_RHI_BLEND_FACTOR_DST_COLOR,
+    LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_DST_COLOR,
+    LUMINARY_RHI_BLEND_FACTOR_SRC_ALPHA,
+    LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+    LUMINARY_RHI_BLEND_FACTOR_DST_ALPHA,
+    LUMINARY_RHI_BLEND_FACTOR_ONE_MINUS_DST_ALPHA,
+    LUMINARY_RHI_BLEND_FACTOR_SRC_ALPHA_SATURATE,
+    LUMINARY_RHI_BLEND_FACTOR_BLEND_COLOR
+} LRHIBlendFactor;
+
+typedef enum LRHIBlendOperation {
+    LUMINARY_RHI_BLEND_OPERATION_ADD,
+    LUMINARY_RHI_BLEND_OPERATION_SUBTRACT,
+    LUMINARY_RHI_BLEND_OPERATION_REVERSE_SUBTRACT,
+    LUMINARY_RHI_BLEND_OPERATION_MIN,
+    LUMINARY_RHI_BLEND_OPERATION_MAX
+} LRHIBlendOperation;
 
 // Types
 LUMINARY_OPAQUE_TYPE(LRHIDevice);
@@ -255,6 +265,9 @@ typedef struct LRHIShaderModuleInfo {
 } LRHIShaderModuleInfo;
 
 typedef struct LRHIRenderPipelineInfo {
+    // General info
+    uint8_t supports_indirect_commands;
+
     // Rasterizer
     LRHIPipelineFillMode fill_mode;
     LRHIPipelineCullMode cull_mode;
@@ -264,6 +277,7 @@ typedef struct LRHIRenderPipelineInfo {
     // Depth-stencil
     uint8_t depth_test_enable;
     uint8_t depth_write_enable;
+    uint8_t depth_clamp_enable;
     LRHICompareOperation depth_compare_op;
     uint8_t stencil_test_enable;
     uint8_t stencil_write_enable;
@@ -271,13 +285,13 @@ typedef struct LRHIRenderPipelineInfo {
     LRHITextureFormat depth_stencil_format;
 
     // Blending and color output
-    uint8_t blend_enable;
-    uint8_t src_color_blend_factor;
-    uint8_t dst_color_blend_factor;
-    uint8_t color_blend_op;
-    uint8_t src_alpha_blend_factor;
-    uint8_t dst_alpha_blend_factor;
-    uint8_t alpha_blend_op;
+    uint8_t blend_enable[8];
+    LRHIBlendFactor blend_src_rgb_factor[8];
+    LRHIBlendFactor blend_dst_rgb_factor[8];
+    LRHIBlendOperation blend_rgb_op[8];
+    LRHIBlendFactor blend_src_alpha_factor[8];
+    LRHIBlendFactor blend_dst_alpha_factor[8];
+    LRHIBlendOperation blend_alpha_op[8];
     LRHITextureFormat render_target_formats[8];
     uint32_t render_target_count;
 
@@ -382,13 +396,25 @@ void lrhi_create_render_pipeline(LRHIDevice device, LRHIRenderPipelineInfo* info
 void lrhi_destroy_render_pipeline(LRHIRenderPipeline pipeline);
 void lrhi_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info);
 uint64_t lrhi_render_pipeline_get_alloc_size(LRHIRenderPipeline pipeline, LRHIError* out_error);
-// TODO: pipeline cache?
+
+// Mesh pipeline functions
+void lrhi_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error);
+void lrhi_destroy_mesh_pipeline(LRHIMeshPipeline pipeline);
+void lrhi_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info);
+uint64_t lrhi_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeline, LRHIError* out_error);
 
 // Render pass functions
 LRHIRenderPass lrhi_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
 void lrhi_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
 void lrhi_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+void lrhi_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error);
+void lrhi_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error);
+void lrhi_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error);
+void lrhi_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error);
+void lrhi_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
+void lrhi_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error);
+void lrhi_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error);
 
 /*
     TODO:

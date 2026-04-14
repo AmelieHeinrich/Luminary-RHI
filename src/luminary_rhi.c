@@ -317,3 +317,78 @@ void lrhi_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModul
 {
     ((LRHIShaderModuleBase*)shader_module)->vtable->get_shader_module_info(shader_module, out_info);
 }
+
+void lrhi_create_render_pipeline(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_render_pipeline(device, info, out_pipeline, out_error);
+}
+
+void lrhi_destroy_render_pipeline(LRHIRenderPipeline pipeline)
+{
+    ((LRHIRenderPipelineBase*)pipeline)->vtable->destroy_render_pipeline(pipeline);
+}
+
+void lrhi_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info)
+{
+    ((LRHIRenderPipelineBase*)pipeline)->vtable->get_render_pipeline_info(pipeline, out_info);
+}
+
+uint64_t lrhi_render_pipeline_get_alloc_size(LRHIRenderPipeline pipeline, LRHIError* out_error)
+{
+    return ((LRHIRenderPipelineBase*)pipeline)->vtable->get_alloc_size(pipeline, out_error);
+}
+
+void lrhi_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_mesh_pipeline(device, info, out_pipeline, out_error);
+}
+
+void lrhi_destroy_mesh_pipeline(LRHIMeshPipeline pipeline)
+{
+    ((LRHIMeshPipelineBase*)pipeline)->vtable->destroy_mesh_pipeline(pipeline);
+}
+
+void lrhi_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info)
+{
+    ((LRHIMeshPipelineBase*)pipeline)->vtable->get_mesh_pipeline_info(pipeline, out_info);
+}
+
+uint64_t lrhi_mesh_pipeline_get_alloc_size(LRHIMeshPipeline pipeline, LRHIError* out_error)
+{
+    return ((LRHIMeshPipelineBase*)pipeline)->vtable->get_alloc_size(pipeline, out_error);
+}
+
+void lrhi_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->set_render_pipeline(render_pass, pipeline, out_error);
+}
+
+void lrhi_render_pass_set_mesh_pipeline(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->set_mesh_pipeline(render_pass, pipeline, out_error);
+}
+
+void lrhi_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->set_viewport(render_pass, x, y, width, height, min_depth, max_depth, out_error);
+}
+
+void lrhi_render_pass_set_scissor(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->set_scissor(render_pass, x, y, width, height, out_error);
+}
+
+void lrhi_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->draw(render_pass, vertex_count, instance_count, first_vertex, first_instance, out_error);
+}
+
+void lrhi_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->draw_indexed(render_pass, index_count, instance_count, first_index, vertex_offset, first_instance, index_buffer, index_stride, out_error);
+}
+
+void lrhi_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->draw_mesh_tasks(render_pass, num_groups_x, num_groups_y, num_groups_z, threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z, threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z, out_error);
+}

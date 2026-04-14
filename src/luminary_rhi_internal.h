@@ -16,6 +16,8 @@ typedef struct LRHIDeviceVTable {
     void           (*create_swap_chain)(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
     void           (*create_texture_view)(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error);
     void           (*create_shader_module)(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
+    void           (*create_render_pipeline)(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error);
+    void           (*create_mesh_pipeline)(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -92,6 +94,13 @@ typedef struct LRHIRenderPassVTable {
     void (*end)(LRHIRenderPass render_pass, LRHIError* out_error);
     void (*intra_barrier)(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
     void (*encoder_barrier)(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
+    void (*set_render_pipeline)(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error);
+    void (*set_mesh_pipeline)(LRHIRenderPass render_pass, LRHIMeshPipeline pipeline, LRHIError* out_error);
+    void (*set_viewport)(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error);
+    void (*set_scissor)(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, LRHIError* out_error);
+    void (*draw)(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
+    void (*draw_indexed)(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error);
+    void (*draw_mesh_tasks)(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error);
 } LRHIRenderPassVTable;
 
 typedef struct LRHIShaderModuleVTable {
@@ -99,19 +108,33 @@ typedef struct LRHIShaderModuleVTable {
     void (*get_shader_module_info)(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info);
 } LRHIShaderModuleVTable;
 
+typedef struct LRHIRenderPipelineVTable {
+    void (*destroy_render_pipeline)(LRHIRenderPipeline pipeline);
+    void (*get_render_pipeline_info)(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info);
+    uint64_t (*get_alloc_size)(LRHIRenderPipeline pipeline, LRHIError* out_error);
+} LRHIRenderPipelineVTable;
+
+typedef struct LRHIMeshPipelineVTable {
+    void (*destroy_mesh_pipeline)(LRHIMeshPipeline pipeline);
+    void (*get_mesh_pipeline_info)(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info);
+    uint64_t (*get_alloc_size)(LRHIMeshPipeline pipeline, LRHIError* out_error);
+} LRHIMeshPipelineVTable;
+
 // Base structs — must be the first member of every backend struct.
-typedef struct LRHIDeviceBase       { const LRHIDeviceVTable*         vtable; } LRHIDeviceBase;
-typedef struct LRHICommandQueueBase { const LRHICommandQueueVTable*   vtable; } LRHICommandQueueBase;
-typedef struct LRHIFenceBase        { const LRHIFenceVTable*          vtable; } LRHIFenceBase;
-typedef struct LRHITextureBase      { const LRHITextureVTable*        vtable; } LRHITextureBase;
-typedef struct LRHIBufferBase       { const LRHIBufferVTable*         vtable; } LRHIBufferBase;
-typedef struct LRHICommandListBase  { const LRHICommandListVTable*    vtable; } LRHICommandListBase;
-typedef struct LRHICopyPassBase     { const LRHICopyPassVTable*       vtable; } LRHICopyPassBase;
-typedef struct LRHIResidencySetBase { const LRHIResidencySetVTable*   vtable; } LRHIResidencySetBase;
-typedef struct LRHISwapChainBase    { const LRHISwapChainVTable*      vtable; } LRHISwapChainBase;
-typedef struct LRHITextureViewBase  { const LRHITextureViewVTable*    vtable; } LRHITextureViewBase;
-typedef struct LRHIRenderPassBase   { const LRHIRenderPassVTable*     vtable; } LRHIRenderPassBase;
-typedef struct LRHIShaderModuleBase { const LRHIShaderModuleVTable*   vtable; } LRHIShaderModuleBase;
+typedef struct LRHIDeviceBase         { const LRHIDeviceVTable*         vtable; } LRHIDeviceBase;
+typedef struct LRHICommandQueueBase   { const LRHICommandQueueVTable*   vtable; } LRHICommandQueueBase;
+typedef struct LRHIFenceBase          { const LRHIFenceVTable*          vtable; } LRHIFenceBase;
+typedef struct LRHITextureBase        { const LRHITextureVTable*        vtable; } LRHITextureBase;
+typedef struct LRHIBufferBase         { const LRHIBufferVTable*         vtable; } LRHIBufferBase;
+typedef struct LRHICommandListBase    { const LRHICommandListVTable*    vtable; } LRHICommandListBase;
+typedef struct LRHICopyPassBase       { const LRHICopyPassVTable*       vtable; } LRHICopyPassBase;
+typedef struct LRHIResidencySetBase   { const LRHIResidencySetVTable*   vtable; } LRHIResidencySetBase;
+typedef struct LRHISwapChainBase      { const LRHISwapChainVTable*      vtable; } LRHISwapChainBase;
+typedef struct LRHITextureViewBase    { const LRHITextureViewVTable*    vtable; } LRHITextureViewBase;
+typedef struct LRHIRenderPassBase     { const LRHIRenderPassVTable*     vtable; } LRHIRenderPassBase;
+typedef struct LRHIShaderModuleBase   { const LRHIShaderModuleVTable*   vtable; } LRHIShaderModuleBase;
+typedef struct LRHIRenderPipelineBase { const LRHIRenderPipelineVTable* vtable; } LRHIRenderPipelineBase;
+typedef struct LRHIMeshPipelineBase   { const LRHIMeshPipelineVTable*   vtable; } LRHIMeshPipelineBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

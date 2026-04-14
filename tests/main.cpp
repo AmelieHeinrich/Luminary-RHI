@@ -29,10 +29,10 @@ int main(int argc, char** argv)
     if (bake_mode)
         printf("Running in BAKE mode — golden files will be (re)generated.\n");
 
-    // Create Metal 4 device
+    // Create device
     LRHIError  err    = {};
     LRHIDevice device = nullptr;
-    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL4, &device, 1, &err);
+    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL3, &device, 1, &err);
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
         fprintf(stderr, "Failed to create device: %s\n", err.message);
         return 1;
