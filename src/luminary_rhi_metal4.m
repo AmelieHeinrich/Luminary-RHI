@@ -152,6 +152,15 @@ typedef struct LRHIComputePassMetal4 {
     char current_push_constants[128];
 } LRHIComputePassMetal4;
 
+typedef struct LRHIBufferViewMetal4 {
+    LRHIBufferViewBase base;
+    LRHIBufferViewInfo info;
+    uint32_t bindless_index;
+    MTLGPUAddress gpu_address;
+
+    Metal4BindlessManager* bindless_manager;
+} LRHIBufferViewMetal4;
+
 // Forward declarations
 static MTLPixelFormat            lrhi_metal4_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage           lrhi_metal4_texture_usage(LRHITextureUsage usage);
@@ -275,6 +284,11 @@ static void            lrhi_metal4_compute_pass_set_push_constants(LRHIComputePa
 static void            lrhi_metal4_compute_pass_set_compute_pipeline(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error);
 static void            lrhi_metal4_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error);
 
+static void            lrhi_metal4_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error);
+static void            lrhi_metal4_destroy_buffer_view(LRHIBufferView buffer_view);
+static void            lrhi_metal4_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info);
+static uint32_t        lrhi_metal4_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
@@ -293,6 +307,7 @@ static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
     .create_render_pipeline = lrhi_metal4_create_render_pipeline,
     .create_mesh_pipeline = lrhi_metal4_create_mesh_pipeline,
     .create_compute_pipeline = lrhi_metal4_create_compute_pipeline,
+    .create_buffer_view = lrhi_metal4_create_buffer_view,
 };
 
 static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
@@ -423,6 +438,12 @@ static const LRHIComputePassVTable lrhi_metal4_compute_pass_vtable = {
     .dispatch = lrhi_metal4_compute_pass_dispatch,
 };
 
+static const LRHIBufferViewVTable lrhi_metal4_buffer_view_vtable = {
+    .destroy_buffer_view = lrhi_metal4_destroy_buffer_view,
+    .get_buffer_view_info = lrhi_metal4_get_buffer_view_info,
+    .get_bindless_index = lrhi_metal4_buffer_view_get_bindless_index,
+};
+
 // Bindless manager
 static void lrhi_metal4_bindless_manager_init(Metal4BindlessManager* manager, LRHIDeviceMetal4* device, LRHIError* out_error)
 {
@@ -459,7 +480,15 @@ static uint32_t lrhi_metal4_bindless_manager_write_texture_view(Metal4BindlessMa
     return index;
 }
 
-// TODO: Write buffer view
+static uint32_t lrhi_metal4_bindless_manager_write_buffer_view(Metal4BindlessManager* manager, LRHIBufferViewMetal4* buffer_view, uint32_t index)
+{
+    IRDescriptorTableEntry entry;
+    entry.gpuVA = buffer_view->gpu_address;
+
+    memcpy(&manager->mapped_resource_heap[index], &entry, sizeof(IRDescriptorTableEntry));
+    return index;
+}
+
 // TODO: Write sampler
 // TODO: Write acceleration structure
 static void lrhi_metal4_bindless_manager_free_resource_view(Metal4BindlessManager* manager, uint32_t index)
@@ -1865,6 +1894,69 @@ static void lrhi_metal4_swap_chain_present(LRHISwapChain swap_chain, LRHIError* 
     [sc->current_drawable present];
     sc->current_drawable        = nil;
     sc->current_texture.texture = nil;
+}
+
+// Buffer view
+
+static void lrhi_metal4_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error)
+{
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
+
+    if (info->buffer == NULL) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Buffer view creation failed: buffer is NULL");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_buffer_view = NULL;
+        return;
+    }
+
+    LRHIBufferMetal4* metal_buffer = (LRHIBufferMetal4*)info->buffer;
+    if (info->offset > metal_buffer->buffer.allocatedSize) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Buffer view creation failed: offset + size exceeds buffer bounds");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_buffer_view = NULL;
+        return;
+    }
+
+    LRHIBufferViewMetal4* out = malloc(sizeof(LRHIBufferViewMetal4));
+    out->base.vtable = &lrhi_metal4_buffer_view_vtable;
+    out->gpu_address = metal_buffer->buffer.gpuAddress + info->offset;
+    out->info = *info;
+    out->bindless_index = lrhi_metal4_bindless_manager_find_free_resource(&metal_device->bindless_manager);
+    lrhi_metal4_bindless_manager_write_buffer_view(&metal_device->bindless_manager, out, out->bindless_index);
+    out->bindless_manager = &metal_device->bindless_manager;
+    *out_buffer_view = (LRHIBufferView)out;
+}
+
+static void lrhi_metal4_destroy_buffer_view(LRHIBufferView buffer_view)
+{
+    LRHIBufferViewMetal4* metal_buffer_view = (LRHIBufferViewMetal4*)buffer_view;
+    if (metal_buffer_view->bindless_index != UINT32_MAX) {
+        lrhi_metal4_bindless_manager_free_resource_view(metal_buffer_view->bindless_manager, metal_buffer_view->bindless_index);
+    }
+    free(buffer_view);
+}
+
+static void lrhi_metal4_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info)
+{
+    LRHIBufferViewMetal4* metal_buffer_view = (LRHIBufferViewMetal4*)buffer_view;
+    *out_info = metal_buffer_view->info;
+}
+
+static uint32_t lrhi_metal4_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error)
+{
+    LRHIBufferViewMetal4* metal_buffer_view = (LRHIBufferViewMetal4*)buffer_view;
+    if (metal_buffer_view->bindless_index == UINT32_MAX) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Buffer view does not have a valid bindless index");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return UINT32_MAX;
+    }
+    return metal_buffer_view->bindless_index;
 }
 
 // Utils

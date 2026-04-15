@@ -462,3 +462,23 @@ void lrhi_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_group
 {
     ((LRHIComputePassBase*)compute_pass)->vtable->dispatch(compute_pass, num_groups_x, num_groups_y, num_groups_z, threads_per_group_x, threads_per_group_y, threads_per_group_z, out_error);
 }
+
+void lrhi_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_buffer_view(device, info, out_buffer_view, out_error);
+}
+
+void lrhi_destroy_buffer_view(LRHIBufferView buffer_view)
+{
+    ((LRHIBufferViewBase*)buffer_view)->vtable->destroy_buffer_view(buffer_view);
+}
+
+void lrhi_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info)
+{
+    ((LRHIBufferViewBase*)buffer_view)->vtable->get_buffer_view_info(buffer_view, out_info);
+}
+
+uint32_t lrhi_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error)
+{
+    return ((LRHIBufferViewBase*)buffer_view)->vtable->get_bindless_index(buffer_view, out_error);
+}

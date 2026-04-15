@@ -43,11 +43,11 @@ typedef enum LRHITextureUsage {
 } LRHITextureUsage;
 
 typedef enum LRHITextureDimensions {
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_1D,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_3D,
-    LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE,
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_1D, // Texture1D
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D, // Texture2D
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY, // Texture2DArray
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_3D, // Texture3D
+    LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE, // TextureCube
 } LRHITextureDimensions;
 
 typedef enum LRHIBufferUsage {
@@ -109,9 +109,6 @@ typedef enum LRHICompareOperation {
     LUMINARY_RHI_COMPARE_OPERATION_ALWAYS
 } LRHICompareOperation;
 
-#define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
-#define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
-
 typedef enum LRHIBlendFactor {
     LUMINARY_RHI_BLEND_FACTOR_ZERO,
     LUMINARY_RHI_BLEND_FACTOR_ONE,
@@ -134,6 +131,17 @@ typedef enum LRHIBlendOperation {
     LUMINARY_RHI_BLEND_OPERATION_MIN,
     LUMINARY_RHI_BLEND_OPERATION_MAX
 } LRHIBlendOperation;
+
+typedef enum LRHIBufferViewType {
+    LUMINARY_RHI_BUFFER_VIEW_TYPE_CONSTANT, // ConstantBuffer<T>
+    LUMINARY_RHI_BUFFER_VIEW_TYPE_STRUCTURED, // StructuredBuffer<T>
+    LUMINARY_RHI_BUFFER_VIEW_TYPE_READWRITE_STRUCTURED, // RWStructuredBuffer<T>
+    LUMINARY_RHI_BUFFER_VIEW_TYPE_RAW, // ByteAddressBuffer
+    LUMINARY_RHI_BUFFER_VIEW_TYPE_READWRITE_RAW // RWByteAddressBuffer
+} LRHIBufferViewType;
+
+#define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
+#define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
 
 // Types
 LUMINARY_OPAQUE_TYPE(LRHIDevice);
@@ -308,6 +316,13 @@ typedef struct LRHIComputePipelineInfo {
     uint8_t supports_indirect_commands;
 } LRHIComputePipelineInfo;
 
+typedef struct LRHIBufferViewInfo {
+    LRHIBuffer buffer;
+    uint64_t offset;
+    
+    LRHIBufferViewType view_type;
+} LRHIBufferViewInfo;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -439,12 +454,15 @@ void lrhi_compute_pass_set_pipeline(LRHIComputePass compute_pass, LRHIComputePip
 void lrhi_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error);
 void lrhi_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error);
 
+// Buffer view
+void lrhi_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error);
+void lrhi_destroy_buffer_view(LRHIBufferView buffer_view);
+void lrhi_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info);
+uint32_t lrhi_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error);
+
 /*
     TODO:
         Sampler:
-            - create/destroy
-            - get info
-        Buffer view:
             - create/destroy
             - get info
         Render Pass:
@@ -456,17 +474,16 @@ void lrhi_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_group
             - get info
             - top level
             - bottom level
+            - get bindless index
         Acceleration structure pass:
             - create/destroy
             - get info
             - begin/end
             - build (direct)
-            - build (indirect), metal only
             - copy
             - compact
 
         API SPECIFIC:
-            - Metal 4: use MTLTextureViewPool, a lot more lightweight than Metal3 texture views
             - Vulkan: do the entire backend lmao
             - D3D12: same
             - Switch & Playstation: get them devkits >.>

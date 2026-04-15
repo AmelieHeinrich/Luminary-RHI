@@ -19,6 +19,7 @@ typedef struct LRHIDeviceVTable {
     void           (*create_render_pipeline)(LRHIDevice device, LRHIRenderPipelineInfo* info, LRHIRenderPipeline* out_pipeline, LRHIError* out_error);
     void           (*create_mesh_pipeline)(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error);
     void           (*create_compute_pipeline)(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error);
+    void           (*create_buffer_view)(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -140,6 +141,12 @@ typedef struct LRHIComputePassVTable {
     void (*dispatch)(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error);
 } LRHIComputePassVTable;
 
+typedef struct LRHIBufferViewVTable {
+    void (*destroy_buffer_view)(LRHIBufferView buffer_view);
+    void (*get_buffer_view_info)(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info);
+    uint32_t (*get_bindless_index)(LRHIBufferView buffer_view, LRHIError* out_error);
+} LRHIBufferViewVTable;
+
 // Base structs — must be the first member of every backend struct.
 typedef struct LRHIDeviceBase          { const LRHIDeviceVTable*          vtable; } LRHIDeviceBase;
 typedef struct LRHICommandQueueBase    { const LRHICommandQueueVTable*    vtable; } LRHICommandQueueBase;
@@ -157,6 +164,7 @@ typedef struct LRHIRenderPipelineBase  { const LRHIRenderPipelineVTable*  vtable
 typedef struct LRHIMeshPipelineBase    { const LRHIMeshPipelineVTable*    vtable; } LRHIMeshPipelineBase;
 typedef struct LRHIComputePipelineBase { const LRHIComputePipelineVTable* vtable; } LRHIComputePipelineBase;
 typedef struct LRHIComputePassBase     { const LRHIComputePassVTable*     vtable; } LRHIComputePassBase;
+typedef struct LRHIBufferViewBase      { const LRHIBufferViewVTable*      vtable; } LRHIBufferViewBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
