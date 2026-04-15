@@ -192,8 +192,7 @@ uint8_t* __luminary_compile_shader_msc(const LuminaryShaderCompilerOptions* opti
     if (options->use_point_topology) {
         IRCompilerSetInputTopology(compiler, IRInputTopologyPoint);
     }
-    IRCompilerSetValidationFlags(compiler, IRCompilerValidationFlagValidateDXIL);
-    IRCompilerSetStageInGenerationMode(compiler, IRStageInCodeGenerationModeUseSeparateStageInFunction);
+    IRCompilerSetValidationFlags(compiler, (IRCompilerValidationFlags)(IRCompilerValidationFlagValidateAllResourcesBound | IRCompilerValidationFlagValidateDXIL));
 
     IRError* compileError = nullptr;
     auto metalIR = IRCompilerAllocCompileAndLink(compiler, options->entry_point, module, &compileError);

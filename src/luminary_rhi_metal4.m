@@ -171,18 +171,22 @@ static MTLCompareFunction        lrhi_metal4_compare_op_to_mtl(LRHICompareOperat
 
 static void            lrhi_metal4_destroy_device(LRHIDevice device);
 static LRHIDeviceInfo  lrhi_metal4_get_device_info(LRHIDevice device);
+
 static void            lrhi_metal4_create_texture(LRHIDevice device, LRHITextureInfo* info, LRHITexture* out_texture, LRHIError* out_error);
 static void            lrhi_metal4_destroy_texture(LRHITexture texture);
 static void            lrhi_metal4_get_texture_info(LRHITexture texture, LRHITextureInfo* out_info);
 static void            lrhi_metal4_texture_replace_region(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
 static void            lrhi_metal4_texture_read_region(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
 static void            lrhi_metal4_texture_readback(LRHIDevice device, LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
+static void            lrhi_metal4_texture_set_name(LRHITexture texture, const char* name);
+
 static void            lrhi_metal4_create_buffer(LRHIDevice device, LRHIBufferInfo* info, LRHIBuffer* out_buffer, LRHIError* out_error);
 static void            lrhi_metal4_destroy_buffer(LRHIBuffer buffer);
 static void            lrhi_metal4_get_buffer_info(LRHIBuffer buffer, LRHIBufferInfo* out_info);
 static void*           lrhi_metal4_buffer_map(LRHIBuffer buffer, LRHIError* out_error);
 static void            lrhi_metal4_buffer_unmap(LRHIBuffer buffer);
 static void            lrhi_metal4_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
+static void            lrhi_metal4_buffer_set_name(LRHIBuffer buffer, const char* name);
 
 static void            lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
 static void            lrhi_metal4_destroy_command_queue(LRHICommandQueue queue);
@@ -312,6 +316,7 @@ static const LRHITextureVTable lrhi_metal4_texture_vtable = {
     .get_texture_info       = lrhi_metal4_get_texture_info,
     .texture_replace_region = lrhi_metal4_texture_replace_region,
     .texture_read_region    = lrhi_metal4_texture_read_region,
+    .texture_set_name       = lrhi_metal4_texture_set_name,
 };
 
 static const LRHIBufferVTable lrhi_metal4_buffer_vtable = {
@@ -319,6 +324,7 @@ static const LRHIBufferVTable lrhi_metal4_buffer_vtable = {
     .get_buffer_info = lrhi_metal4_get_buffer_info,
     .buffer_map      = lrhi_metal4_buffer_map,
     .buffer_unmap    = lrhi_metal4_buffer_unmap,
+    .buffer_set_name = lrhi_metal4_buffer_set_name,
 };
 
 static const LRHICommandListVTable lrhi_metal4_command_list_vtable = {
@@ -596,6 +602,12 @@ static void lrhi_metal4_texture_readback(LRHIDevice device, LRHITexture texture,
     lrhi_metal4_texture_read_region(texture, region, mip_level, array_layer, out_data, data_size, bytes_per_row, bytes_per_image, out_error);
 }
 
+static void lrhi_metal4_texture_set_name(LRHITexture texture, const char* name)
+{
+    LRHITextureMetal4* metal_texture = (LRHITextureMetal4*)texture;
+    metal_texture->texture.label = [NSString stringWithUTF8String:name];
+}
+
 // Buffers
 
 static void lrhi_metal4_create_buffer(LRHIDevice device, LRHIBufferInfo* info, LRHIBuffer* out_buffer, LRHIError* out_error)
@@ -657,6 +669,12 @@ static void lrhi_metal4_buffer_readback(LRHIDevice device, LRHIBuffer buffer, vo
     }
 }
 
+static void lrhi_metal4_buffer_set_name(LRHIBuffer buffer, const char* name)
+{
+    LRHIBufferMetal4* metal_buffer = (LRHIBufferMetal4*)buffer;
+    metal_buffer->buffer.label = [NSString stringWithUTF8String:name];
+}
+
 // Command queue and fence
 
 static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
@@ -684,6 +702,8 @@ static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue
         *out_queue = NULL;
         return;
     }
+    [internal_residency_set addAllocation:metal_device->bindless_manager.resource_heap_buffer];
+    [internal_residency_set addAllocation:metal_device->bindless_manager.sampler_heap_buffer];
     [base_queue addResidencySet:internal_residency_set];
 
     LRHICommandQueueMetal4* out = malloc(sizeof(LRHICommandQueueMetal4));
@@ -692,6 +712,17 @@ static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue
     out->device = metal_device->device;
     out->internal_residency_set = internal_residency_set;
     *out_queue = (LRHICommandQueue)out;
+
+#ifdef LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
+    MTLCaptureDescriptor* capture_desc = [[MTLCaptureDescriptor alloc] init];
+    capture_desc.captureObject = base_queue;
+
+    NSError* capture_error = nil;
+    [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:capture_desc error:&capture_error];
+    if (capture_error) {
+        NSLog(@"[LRHI] Metal4 programmatic capture failed to start: %@", capture_error);
+    }
+#endif
 }
 
 static void lrhi_metal4_destroy_command_queue(LRHICommandQueue queue)
@@ -738,6 +769,10 @@ static void lrhi_metal4_command_queue_submit(LRHICommandQueue queue, LRHICommand
         LRHIFenceMetal4* metal_signal_fence = (LRHIFenceMetal4*)signal_fence;
         [metal_queue->queue signalEvent:metal_signal_fence->event value:signal_value];
     }
+
+#ifdef LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
+    [[MTLCaptureManager sharedCaptureManager] stopCapture];
+#endif
 }
 
 static void lrhi_metal4_command_queue_add_residency_set(LRHICommandQueue queue, LRHIResidencySet residency_set, LRHIError* out_error)
@@ -1058,7 +1093,8 @@ static void lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewIn
                                 ((info->array_layer_count == metal_texture->info.array_layers) ||
                                 (info->array_layer_count == LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS)) &&
                                 (info->usage == metal_texture->info.usage);
-    if (!is_same_as_base_texture) {
+    if (info->usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || info->usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
+        // Bindless views always need a descriptor heap slot, even when matching the base texture.
         MTLTextureViewDescriptor* descriptor = [[MTLTextureViewDescriptor alloc] init];
         descriptor.pixelFormat = lrhi_metal4_pixel_format(info->format);
         if (info->mip_level_count == LUMINARY_TEXTURE_VIEW_ALL_MIPS) {
@@ -1073,14 +1109,25 @@ static void lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewIn
         }
         descriptor.textureType = lrhi_metal4_texture_type(info->dimensions);
 
-        // If it's not a resource view, go through texture view pool
-        if (info->usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || info->usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
-            out->bindless_index = lrhi_metal4_bindless_manager_find_free_resource(&metal_device->bindless_manager);
-            out->bindless_resource_id._impl = metal_device->texture_view_pool.baseResourceID._impl + [metal_device->texture_view_pool setTextureView:metal_texture->texture descriptor:descriptor atIndex:out->bindless_index]._impl;
-            lrhi_metal4_bindless_manager_write_texture_view(&metal_device->bindless_manager, out, out->bindless_index);
+        out->bindless_index = lrhi_metal4_bindless_manager_find_free_resource(&metal_device->bindless_manager);
+        out->bindless_resource_id = [metal_device->texture_view_pool setTextureView:metal_texture->texture descriptor:descriptor atIndex:out->bindless_index];
+        lrhi_metal4_bindless_manager_write_texture_view(&metal_device->bindless_manager, out, out->bindless_index);
+    } else if (!is_same_as_base_texture) {
+        MTLTextureViewDescriptor* descriptor = [[MTLTextureViewDescriptor alloc] init];
+        descriptor.pixelFormat = lrhi_metal4_pixel_format(info->format);
+        if (info->mip_level_count == LUMINARY_TEXTURE_VIEW_ALL_MIPS) {
+            descriptor.levelRange = NSMakeRange(info->base_mip_level, metal_texture->info.mip_levels - info->base_mip_level);
         } else {
-            out->texture_view = [metal_texture->texture newTextureViewWithDescriptor:descriptor];
+            descriptor.levelRange = NSMakeRange(info->base_mip_level, info->mip_level_count);
         }
+        if (info->array_layer_count == LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS) {
+            descriptor.sliceRange = NSMakeRange(info->base_array_layer, metal_texture->info.array_layers - info->base_array_layer);
+        } else {
+            descriptor.sliceRange = NSMakeRange(info->base_array_layer, info->array_layer_count);
+        }
+        descriptor.textureType = lrhi_metal4_texture_type(info->dimensions);
+
+        out->texture_view = [metal_texture->texture newTextureViewWithDescriptor:descriptor];
     } else {
         out->texture_view = metal_texture->texture;
     }
@@ -1188,13 +1235,13 @@ static void lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, LRHIError* o
 static void lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
 {
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
-    [metal_render_pass->render_encoder barrierAfterEncoderStages:lrhi_metal4_render_stage_to_mtl(beforeStage) beforeEncoderStages:lrhi_metal4_render_stage_to_mtl(afterStage) visibilityOptions:MTL4VisibilityOptionDevice];
+    [metal_render_pass->render_encoder barrierAfterEncoderStages:lrhi_metal4_render_stage_to_mtl(afterStage) beforeEncoderStages:lrhi_metal4_render_stage_to_mtl(beforeStage) visibilityOptions:MTL4VisibilityOptionDevice];
 }
 
 static void lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
 {
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
-    [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(beforeStage) beforeStages:lrhi_metal4_render_stage_to_mtl(afterStage) visibilityOptions:MTL4VisibilityOptionDevice];
+    [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(afterStage) beforeStages:lrhi_metal4_render_stage_to_mtl(beforeStage) visibilityOptions:MTL4VisibilityOptionDevice];
 }
 
 static void lrhi_metal4_render_pass_set_push_constants(LRHIRenderPass render_pass, const void* data, uint32_t size, LRHIError* out_error)
@@ -1687,7 +1734,7 @@ static void lrhi_metal4_compute_pass_encoder_barrier(LRHIComputePass compute_pas
 {
     (void)out_error;
     LRHIComputePassMetal4* metal_compute_pass = (LRHIComputePassMetal4*)compute_pass;
-    [metal_compute_pass->compute_encoder barrierAfterQueueStages:MTLStageDispatch beforeStages:lrhi_metal4_render_stage_to_mtl(after_stage) visibilityOptions:MTL4VisibilityOptionDevice];
+    [metal_compute_pass->compute_encoder barrierAfterQueueStages:lrhi_metal4_render_stage_to_mtl(after_stage) beforeStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
 }
 
 static void lrhi_metal4_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error)

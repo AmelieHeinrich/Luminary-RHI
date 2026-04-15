@@ -5,7 +5,7 @@
 void lrhi_freelist_init(LRHIFreeList* freelist, uint64_t max_slots)
 {
     freelist->max_slots = max_slots;
-    freelist->bitmap_size = (max_slots + 63) / 64; // Round up to nearest 64
+    freelist->bitmap_size = (max_slots + 63) / 64;
     freelist->bitmap = (uint64_t*)calloc(freelist->bitmap_size, sizeof(uint64_t));
     freelist->free_list = (uint32_t*)malloc(max_slots * sizeof(uint32_t));
     for (uint64_t i = 0; i < max_slots; i++) {

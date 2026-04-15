@@ -42,6 +42,7 @@ typedef struct LRHITextureVTable {
     void (*get_texture_info)(LRHITexture texture, LRHITextureInfo* out_info);
     void (*texture_replace_region)(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
     void (*texture_read_region)(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
+    void (*texture_set_name)(LRHITexture texture, const char* name);
 } LRHITextureVTable;
 
 typedef struct LRHIBufferVTable {
@@ -49,6 +50,7 @@ typedef struct LRHIBufferVTable {
     void  (*get_buffer_info)(LRHIBuffer buffer, LRHIBufferInfo* out_info);
     void* (*buffer_map)(LRHIBuffer buffer, LRHIError* out_error);
     void  (*buffer_unmap)(LRHIBuffer buffer);
+    void  (*buffer_set_name)(LRHIBuffer buffer, const char* name);
 } LRHIBufferVTable;
 
 typedef struct LRHICommandListVTable {

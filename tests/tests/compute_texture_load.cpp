@@ -1,3 +1,4 @@
+#include "luminary_rhi.h"
 #include "tests/draw_helpers.h"
 #include <cstring>
 #include <string>
@@ -45,7 +46,9 @@ static bool compute_end_cmd(LRHIDevice device,
         lrhi_destroy_command_queue(queue);
         return false;
     }
-    lrhi_command_queue_add_residency_set(queue, rs, nullptr);
+    if (rs) {
+        lrhi_command_queue_add_residency_set(queue, rs, nullptr);
+    }
     lrhi_command_queue_submit(queue, &cmd, 1, fence, 1, nullptr, 0, nullptr);
     lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, nullptr);
     lrhi_fence_wait(fence, 1, 5000000000ULL, nullptr);
@@ -55,16 +58,19 @@ static bool compute_end_cmd(LRHIDevice device,
     return true;
 }
 
-static bool upload_to_texture_with_staging(LRHIDevice device,
-                                           LRHITexture dst_texture,
-                                           const void* data,
-                                           uint32_t data_size,
-                                           uint32_t bytes_per_row,
-                                           uint32_t bytes_per_image,
-                                           LRHIRegion dst_region,
-                                           uint32_t dst_mip,
-                                           uint32_t dst_layer,
-                                           std::string& err_out)
+static bool record_upload_to_texture_with_staging(LRHIDevice device,
+                                                  LRHICommandList cmd,
+                                                  LRHIResidencySet rs,
+                                                  LRHITexture dst_texture,
+                                                  const void* data,
+                                                  uint32_t data_size,
+                                                  uint32_t bytes_per_row,
+                                                  uint32_t bytes_per_image,
+                                                  LRHIRegion dst_region,
+                                                  uint32_t dst_mip,
+                                                  uint32_t dst_layer,
+                                                  LRHIBuffer* out_staging,
+                                                  std::string& err_out)
 {
     LRHIError err = {};
 
@@ -89,28 +95,11 @@ static bool upload_to_texture_with_staging(LRHIDevice device,
     memcpy(mapped, data, data_size);
     lrhi_buffer_unmap(staging);
 
-    LRHIResidencySet rs = nullptr;
-    lrhi_create_residency_set(device, &rs, &err);
     lrhi_residency_set_add_buffer(rs, staging, &err);
-    lrhi_residency_set_add_texture(rs, dst_texture, &err);
     lrhi_residency_set_update(rs, &err);
 
-    LRHICommandQueue queue = nullptr;
-    LRHIFence fence = nullptr;
-    LRHICommandList cmd = nullptr;
-    lrhi_create_command_queue(device, &queue, &err);
-    lrhi_create_fence(device, 0, &fence, &err);
-    lrhi_create_command_list(queue, &cmd, &err);
-
-    lrhi_command_queue_add_residency_set(queue, rs, &err);
-
-    lrhi_command_list_begin(cmd, &err);
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
-        err_out = std::string("upload cmd begin failed: ") + err.message;
-        lrhi_destroy_command_list(cmd);
-        lrhi_destroy_fence(fence);
-        lrhi_destroy_command_queue(queue);
-        lrhi_destroy_residency_set(rs);
+        err_out = std::string("add upload residency failed: ") + err.message;
         lrhi_destroy_buffer(staging);
         return false;
     }
@@ -121,26 +110,13 @@ static bool upload_to_texture_with_staging(LRHIDevice device,
         dst_texture, dst_region, dst_mip, dst_layer, &err);
     lrhi_copy_pass_end(cp, &err);
 
-    lrhi_command_list_end(cmd, &err);
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
-        err_out = std::string("upload cmd end failed: ") + err.message;
-        lrhi_destroy_command_list(cmd);
-        lrhi_destroy_fence(fence);
-        lrhi_destroy_command_queue(queue);
-        lrhi_destroy_residency_set(rs);
+        err_out = std::string("record upload copy failed: ") + err.message;
         lrhi_destroy_buffer(staging);
         return false;
     }
 
-    lrhi_command_queue_submit(queue, &cmd, 1, fence, 1, nullptr, 0, &err);
-    lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, &err);
-    lrhi_fence_wait(fence, 1, 5000000000ULL, &err);
-
-    lrhi_destroy_command_list(cmd);
-    lrhi_destroy_fence(fence);
-    lrhi_destroy_command_queue(queue);
-    lrhi_destroy_residency_set(rs);
-    lrhi_destroy_buffer(staging);
+    *out_staging = staging;
     return true;
 }
 
@@ -182,7 +158,7 @@ class compute_texture_load_2d_test : public test
     LRHITextureView _output_view = nullptr;
     LRHIShaderModule _compute_shader = nullptr;
     LRHIComputePipeline _pipeline = nullptr;
-    LRHIResidencySet _rs = nullptr;
+    std::vector<uint8_t> _init_data;
 
 public:
     compute_texture_load_2d_test()
@@ -209,12 +185,13 @@ public:
         input_info.dimensions = LUMINARY_RHI_TEXTURE_DIMENSIONS_2D;
         LRHIError err = {};
         lrhi_create_texture(device, &input_info, &_input_texture, &err);
+        lrhi_texture_set_name(_input_texture, "InputTexture");
 
         // Create output 2D texture (storage)
         LRHITextureInfo output_info = input_info;
-        output_info.usage = (LRHITextureUsage)(LUMINARY_RHI_TEXTURE_USAGE_STORAGE |
-                                              LUMINARY_RHI_TEXTURE_USAGE_SAMPLED);
+        output_info.usage = (LRHITextureUsage)(LUMINARY_RHI_TEXTURE_USAGE_STORAGE);
         lrhi_create_texture(device, &output_info, &_output_texture, &err);
+        lrhi_texture_set_name(_output_texture, "OutputTexture");
 
         // Create texture views
         _input_view = dh_make_view(device, _input_texture,
@@ -229,32 +206,17 @@ public:
                                     0, LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS);
 
         // Initialize input texture with gradient pattern
-        std::vector<float> init_data(W * H * 4);
+        _init_data.resize((size_t)W * H * 4);
         for (uint32_t y = 0; y < H; ++y) {
             for (uint32_t x = 0; x < W; ++x) {
                 uint32_t idx = (y * W + x) * 4;
                 float u = x / (float)W;
                 float v = y / (float)H;
-                init_data[idx + 0] = u;
-                init_data[idx + 1] = v;
-                init_data[idx + 2] = 0.5f + 0.5f * (u + v) / 2.0f;
-                init_data[idx + 3] = 1.0f;
+                _init_data[idx + 0] = (uint8_t)(u * 255.0f);
+                _init_data[idx + 1] = (uint8_t)(v * 255.0f);
+                _init_data[idx + 2] = (uint8_t)((0.5f + 0.5f * (u + v) / 2.0f) * 255.0f);
+                _init_data[idx + 3] = 255;
             }
-        }
-
-        LRHIRegion upload_region = {0, 0, 0, W, H, 1};
-        std::string upload_err;
-        if (!upload_to_texture_with_staging(_device,
-                                            _input_texture,
-                                            init_data.data(),
-                                            (uint32_t)(init_data.size() * sizeof(float)),
-                                            W * 4 * sizeof(float),
-                                            W * H * 4 * (uint32_t)sizeof(float),
-                                            upload_region,
-                                            0,
-                                            0,
-                                            upload_err)) {
-            return;
         }
 
         // Compile compute shader
@@ -275,16 +237,11 @@ public:
             lrhi_create_compute_pipeline(device, &info, &_pipeline, &err);
         }
 
-        err = {};
-        lrhi_create_residency_set(device, &_rs, &err);
-        lrhi_residency_set_add_texture(_rs, _input_texture, nullptr);
-        lrhi_residency_set_add_texture(_rs, _output_texture, nullptr);
-        lrhi_residency_set_update(_rs, nullptr);
     }
 
     test_result run(bool bake_mode) override
     {
-        if (!_pipeline || !_input_texture || !_output_texture) return {false, "init failed"};
+        if (!_pipeline || !_input_texture || !_output_texture || _init_data.empty()) return {false, "init failed"};
         std::string err;
 
         // Get bindless indices
@@ -298,19 +255,56 @@ public:
         LRHICommandList cmd = nullptr;
         if (!compute_begin_cmd(_device, &queue, &fence, &cmd, err)) return {false, err};
 
+        LRHIResidencySet run_rs = nullptr;
+        LRHIError rs_err = {};
+        lrhi_create_residency_set(_device, &run_rs, &rs_err);
+        lrhi_residency_set_add_texture(run_rs, _input_texture, &rs_err);
+        lrhi_residency_set_add_texture(run_rs, _output_texture, &rs_err);
+        lrhi_residency_set_update(run_rs, &rs_err);
+        if (rs_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
+            return {false, std::string("run residency setup failed: ") + rs_err.message};
+        }
+
+        LRHIBuffer upload_staging = nullptr;
+        LRHIRegion upload_region = {0, 0, 0, W, H, 1};
+        if (!record_upload_to_texture_with_staging(_device,
+                                                   cmd,
+                                                   run_rs,
+                                                   _input_texture,
+                                                   _init_data.data(),
+                                                   (uint32_t)_init_data.size(),
+                                                   W * 4,
+                                                   W * H * 4,
+                                                   upload_region,
+                                                   0,
+                                                   0,
+                                                   &upload_staging,
+                                                   err)) {
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
+            return {false, err};
+        }
+
         // Begin compute pass
         lerr = {};
         LRHIComputePass compute_pass = lrhi_compute_pass_begin(cmd, &lerr);
         if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
-            if (!compute_end_cmd(_device, queue, fence, cmd, _rs, err)) {}
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
             return {false, std::string("compute_pass_begin: ") + lerr.message};
         }
 
         // Set pipeline
+        lrhi_compute_pass_encoder_barrier(compute_pass, LUMINARY_RHI_RENDER_STAGE_COPY, &lerr);
         lrhi_compute_pass_set_pipeline(compute_pass, _pipeline, &lerr);
         if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
             lrhi_compute_pass_end(compute_pass, nullptr);
-            if (!compute_end_cmd(_device, queue, fence, cmd, _rs, err)) {}
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
             return {false, std::string("compute_pass_set_pipeline: ") + lerr.message};
         }
 
@@ -325,7 +319,9 @@ public:
         lrhi_compute_pass_dispatch(compute_pass, 16, 16, 1, 8, 8, 1, &lerr);
         if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
             lrhi_compute_pass_end(compute_pass, nullptr);
-            if (!compute_end_cmd(_device, queue, fence, cmd, _rs, err)) {}
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
             return {false, std::string("compute_pass_dispatch: ") + lerr.message};
         }
 
@@ -333,7 +329,14 @@ public:
         lrhi_compute_pass_end(compute_pass, &lerr);
 
         // Submit and wait
-        if (!compute_end_cmd(_device, queue, fence, cmd, _rs, err)) return {false, err};
+        if (!compute_end_cmd(_device, queue, fence, cmd, run_rs, err)) {
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            return {false, err};
+        }
+
+        lrhi_destroy_buffer(upload_staging);
+        lrhi_destroy_residency_set(run_rs);
 
         // Validate output texture
         return texture_test_result(_device, _output_texture, name, source_path, bake_mode);
@@ -345,9 +348,9 @@ public:
         if (_input_view)      { lrhi_destroy_texture_view(_input_view);     _input_view      = nullptr; }
         if (_pipeline)        { lrhi_destroy_compute_pipeline(_pipeline);   _pipeline        = nullptr; }
         if (_compute_shader)  { lrhi_destroy_shader_module(_compute_shader); _compute_shader = nullptr; }
-        if (_rs)              { lrhi_destroy_residency_set(_rs);            _rs              = nullptr; }
         if (_output_texture)  { lrhi_destroy_texture(_output_texture);      _output_texture  = nullptr; }
         if (_input_texture)   { lrhi_destroy_texture(_input_texture);       _input_texture   = nullptr; }
+        _init_data.clear();
     }
 };
 
@@ -371,7 +374,7 @@ class compute_texture_load_2d_array_test : public test
     LRHITextureView _output_view = nullptr;
     LRHIShaderModule _compute_shader = nullptr;
     LRHIComputePipeline _pipeline = nullptr;
-    LRHIResidencySet _rs = nullptr;
+    std::vector<uint8_t> _init_data;
 
 public:
     compute_texture_load_2d_array_test()
@@ -398,12 +401,14 @@ public:
         input_info.dimensions = LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY;
         LRHIError err = {};
         lrhi_create_texture(device, &input_info, &_input_texture, &err);
+        lrhi_texture_set_name(_input_texture, "InputTexture");
 
         // Create output 2D array texture
         LRHITextureInfo output_info = input_info;
         output_info.usage = (LRHITextureUsage)(LUMINARY_RHI_TEXTURE_USAGE_STORAGE |
                                               LUMINARY_RHI_TEXTURE_USAGE_SAMPLED);
         lrhi_create_texture(device, &output_info, &_output_texture, &err);
+        lrhi_texture_set_name(_output_texture, "OutputTexture");
 
         // Create texture views
         _input_view = dh_make_view(device, _input_texture,
@@ -418,7 +423,7 @@ public:
                                     0, LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS);
 
         // Initialize input with layer-specific patterns
-        std::vector<float> init_data(W * H * LAYERS * 4);
+        _init_data.resize((size_t)W * H * LAYERS * 4);
         for (uint32_t layer = 0; layer < LAYERS; ++layer) {
             for (uint32_t y = 0; y < H; ++y) {
                 for (uint32_t x = 0; x < W; ++x) {
@@ -426,29 +431,11 @@ public:
                     float u = x / (float)W;
                     float v = y / (float)H;
                     float l = layer / (float)LAYERS;
-                    init_data[idx + 0] = u;
-                    init_data[idx + 1] = v;
-                    init_data[idx + 2] = l;
-                    init_data[idx + 3] = 1.0f;
+                    _init_data[idx + 0] = (uint8_t)(u * 255.0f);
+                    _init_data[idx + 1] = (uint8_t)(v * 255.0f);
+                    _init_data[idx + 2] = (uint8_t)(l * 255.0f);
+                    _init_data[idx + 3] = 255;
                 }
-            }
-        }
-
-        LRHIRegion upload_region = {0, 0, 0, W, H, 1};
-        std::string upload_err;
-        for (uint32_t layer = 0; layer < LAYERS; ++layer) {
-            const size_t layer_stride = (size_t)W * H * 4;
-            if (!upload_to_texture_with_staging(_device,
-                                                _input_texture,
-                                                init_data.data() + layer * layer_stride,
-                                                (uint32_t)(layer_stride * sizeof(float)),
-                                                W * 4 * (uint32_t)sizeof(float),
-                                                W * H * 4 * (uint32_t)sizeof(float),
-                                                upload_region,
-                                                0,
-                                                layer,
-                                                upload_err)) {
-                return;
             }
         }
 
@@ -469,16 +456,11 @@ public:
             lrhi_create_compute_pipeline(device, &info, &_pipeline, &err);
         }
 
-        err = {};
-        lrhi_create_residency_set(device, &_rs, &err);
-        lrhi_residency_set_add_texture(_rs, _input_texture, nullptr);
-        lrhi_residency_set_add_texture(_rs, _output_texture, nullptr);
-        lrhi_residency_set_update(_rs, nullptr);
     }
 
     test_result run(bool bake_mode) override
     {
-        if (!_pipeline || !_input_texture || !_output_texture) return {false, "init failed"};
+        if (!_pipeline || !_input_texture || !_output_texture || _init_data.empty()) return {false, "init failed"};
         std::string err;
 
         LRHIError lerr = {};
@@ -490,16 +472,63 @@ public:
         LRHICommandList cmd = nullptr;
         if (!compute_begin_cmd(_device, &queue, &fence, &cmd, err)) return {false, err};
 
+        LRHIResidencySet run_rs = nullptr;
+        LRHIError rs_err = {};
+        lrhi_create_residency_set(_device, &run_rs, &rs_err);
+        lrhi_residency_set_add_texture(run_rs, _input_texture, &rs_err);
+        lrhi_residency_set_add_texture(run_rs, _output_texture, &rs_err);
+        lrhi_residency_set_update(run_rs, &rs_err);
+        if (rs_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
+            return {false, std::string("run residency setup failed: ") + rs_err.message};
+        }
+
+        std::vector<LRHIBuffer> upload_staging_buffers;
+        upload_staging_buffers.reserve(LAYERS);
+        LRHIRegion upload_region = {0, 0, 0, W, H, 1};
+        const size_t layer_stride = (size_t)W * H * 4;
+        for (uint32_t layer = 0; layer < LAYERS; ++layer) {
+            LRHIBuffer upload_staging = nullptr;
+            if (!record_upload_to_texture_with_staging(_device,
+                                                       cmd,
+                                                       run_rs,
+                                                       _input_texture,
+                                                       _init_data.data() + layer * layer_stride,
+                                                       (uint32_t)layer_stride,
+                                                       W * 4,
+                                                       W * H * 4,
+                                                       upload_region,
+                                                       0,
+                                                       layer,
+                                                       &upload_staging,
+                                                       err)) {
+                for (LRHIBuffer b : upload_staging_buffers) lrhi_destroy_buffer(b);
+                lrhi_destroy_residency_set(run_rs);
+                if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
+                return {false, err};
+            }
+            upload_staging_buffers.push_back(upload_staging);
+        }
+
         for (uint32_t layer = 0; layer < LAYERS; ++layer)
         {
             lerr = {};
             LRHIComputePass compute_pass = lrhi_compute_pass_begin(cmd, &lerr);
-            if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR)
+            if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+                for (LRHIBuffer b : upload_staging_buffers) lrhi_destroy_buffer(b);
+                lrhi_destroy_residency_set(run_rs);
+                if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
                 return {false, std::string("compute_pass_begin: ") + lerr.message};
+            }
 
+            lrhi_compute_pass_encoder_barrier(compute_pass, LUMINARY_RHI_RENDER_STAGE_COPY, &lerr);
             lrhi_compute_pass_set_pipeline(compute_pass, _pipeline, &lerr);
             if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
                 lrhi_compute_pass_end(compute_pass, nullptr);
+                for (LRHIBuffer b : upload_staging_buffers) lrhi_destroy_buffer(b);
+                lrhi_destroy_residency_set(run_rs);
+                if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
                 return {false, std::string("compute_pass_set_pipeline: ") + lerr.message};
             }
 
@@ -513,13 +542,23 @@ public:
             lrhi_compute_pass_dispatch(compute_pass, 16, 16, 1, 8, 8, 1, &lerr);
             if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
                 lrhi_compute_pass_end(compute_pass, nullptr);
+                for (LRHIBuffer b : upload_staging_buffers) lrhi_destroy_buffer(b);
+                lrhi_destroy_residency_set(run_rs);
+                if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
                 return {false, std::string("compute_pass_dispatch: ") + lerr.message};
             }
 
             lrhi_compute_pass_end(compute_pass, &lerr);
         }
 
-        if (!compute_end_cmd(_device, queue, fence, cmd, _rs, err)) return {false, err};
+        if (!compute_end_cmd(_device, queue, fence, cmd, run_rs, err)) {
+            for (LRHIBuffer b : upload_staging_buffers) lrhi_destroy_buffer(b);
+            lrhi_destroy_residency_set(run_rs);
+            return {false, err};
+        }
+
+        for (LRHIBuffer b : upload_staging_buffers) lrhi_destroy_buffer(b);
+        lrhi_destroy_residency_set(run_rs);
         return texture_test_result(_device, _output_texture, name, source_path, bake_mode);
     }
 
@@ -529,9 +568,9 @@ public:
         if (_input_view)      { lrhi_destroy_texture_view(_input_view);     _input_view      = nullptr; }
         if (_pipeline)        { lrhi_destroy_compute_pipeline(_pipeline);   _pipeline        = nullptr; }
         if (_compute_shader)  { lrhi_destroy_shader_module(_compute_shader); _compute_shader = nullptr; }
-        if (_rs)              { lrhi_destroy_residency_set(_rs);            _rs              = nullptr; }
         if (_output_texture)  { lrhi_destroy_texture(_output_texture);      _output_texture  = nullptr; }
         if (_input_texture)   { lrhi_destroy_texture(_input_texture);       _input_texture   = nullptr; }
+        _init_data.clear();
     }
 };
 
@@ -555,7 +594,7 @@ class compute_texture_load_3d_test : public test
     LRHITextureView _output_view = nullptr;
     LRHIShaderModule _compute_shader = nullptr;
     LRHIComputePipeline _pipeline = nullptr;
-    LRHIResidencySet _rs = nullptr;
+    std::vector<uint8_t> _init_data;
 
 public:
     compute_texture_load_3d_test()
@@ -582,12 +621,14 @@ public:
         input_info.dimensions = LUMINARY_RHI_TEXTURE_DIMENSIONS_3D;
         LRHIError err = {};
         lrhi_create_texture(device, &input_info, &_input_texture, &err);
+        lrhi_texture_set_name(_input_texture, "InputTexture");
 
         // Create output 3D texture
         LRHITextureInfo output_info = input_info;
         output_info.usage = (LRHITextureUsage)(LUMINARY_RHI_TEXTURE_USAGE_STORAGE |
                                               LUMINARY_RHI_TEXTURE_USAGE_SAMPLED);
         lrhi_create_texture(device, &output_info, &_output_texture, &err);
+        lrhi_texture_set_name(_output_texture, "OutputTexture");
 
         // Create texture views
         _input_view = dh_make_view(device, _input_texture,
@@ -602,7 +643,7 @@ public:
                                     0, LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS);
 
         // Initialize input with 3D gradient
-        std::vector<float> init_data(W * H * D * 4);
+        _init_data.resize((size_t)W * H * D * 4);
         for (uint32_t z = 0; z < D; ++z) {
             for (uint32_t y = 0; y < H; ++y) {
                 for (uint32_t x = 0; x < W; ++x) {
@@ -610,27 +651,12 @@ public:
                     float u = x / (float)W;
                     float v = y / (float)H;
                     float w = z / (float)D;
-                    init_data[idx + 0] = u;
-                    init_data[idx + 1] = v;
-                    init_data[idx + 2] = w;
-                    init_data[idx + 3] = 1.0f;
+                    _init_data[idx + 0] = (uint8_t)(u * 255.0f);
+                    _init_data[idx + 1] = (uint8_t)(v * 255.0f);
+                    _init_data[idx + 2] = (uint8_t)(w * 255.0f);
+                    _init_data[idx + 3] = 255;
                 }
             }
-        }
-
-        LRHIRegion upload_region = {0, 0, 0, W, H, D};
-        std::string upload_err;
-        if (!upload_to_texture_with_staging(_device,
-                                            _input_texture,
-                                            init_data.data(),
-                                            (uint32_t)(init_data.size() * sizeof(float)),
-                                            W * 4 * (uint32_t)sizeof(float),
-                                            W * H * 4 * (uint32_t)sizeof(float),
-                                            upload_region,
-                                            0,
-                                            0,
-                                            upload_err)) {
-            return;
         }
 
         // Compile compute shader
@@ -650,16 +676,11 @@ public:
             lrhi_create_compute_pipeline(device, &info, &_pipeline, &err);
         }
 
-        err = {};
-        lrhi_create_residency_set(device, &_rs, &err);
-        lrhi_residency_set_add_texture(_rs, _input_texture, nullptr);
-        lrhi_residency_set_add_texture(_rs, _output_texture, nullptr);
-        lrhi_residency_set_update(_rs, nullptr);
     }
 
     test_result run(bool bake_mode) override
     {
-        if (!_pipeline || !_input_texture || !_output_texture) return {false, "init failed"};
+        if (!_pipeline || !_input_texture || !_output_texture || _init_data.empty()) return {false, "init failed"};
         std::string err;
 
         LRHIError lerr = {};
@@ -671,14 +692,54 @@ public:
         LRHICommandList cmd = nullptr;
         if (!compute_begin_cmd(_device, &queue, &fence, &cmd, err)) return {false, err};
 
+        LRHIResidencySet run_rs = nullptr;
+        LRHIError rs_err = {};
+        lrhi_create_residency_set(_device, &run_rs, &rs_err);
+        lrhi_residency_set_add_texture(run_rs, _input_texture, &rs_err);
+        lrhi_residency_set_add_texture(run_rs, _output_texture, &rs_err);
+        lrhi_residency_set_update(run_rs, &rs_err);
+        if (rs_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
+            return {false, std::string("run residency setup failed: ") + rs_err.message};
+        }
+
+        LRHIBuffer upload_staging = nullptr;
+        LRHIRegion upload_region = {0, 0, 0, W, H, D};
+        if (!record_upload_to_texture_with_staging(_device,
+                                                   cmd,
+                                                   run_rs,
+                                                   _input_texture,
+                                                   _init_data.data(),
+                                                   (uint32_t)_init_data.size(),
+                                                   W * 4,
+                                                   W * H * 4,
+                                                   upload_region,
+                                                   0,
+                                                   0,
+                                                   &upload_staging,
+                                                   err)) {
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
+            return {false, err};
+        }
+
         lerr = {};
         LRHIComputePass compute_pass = lrhi_compute_pass_begin(cmd, &lerr);
-        if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR)
+        if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
             return {false, std::string("compute_pass_begin: ") + lerr.message};
+        }
 
+        lrhi_compute_pass_encoder_barrier(compute_pass, LUMINARY_RHI_RENDER_STAGE_COPY, &lerr);
         lrhi_compute_pass_set_pipeline(compute_pass, _pipeline, &lerr);
         if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
             lrhi_compute_pass_end(compute_pass, nullptr);
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
             return {false, std::string("compute_pass_set_pipeline: ") + lerr.message};
         }
 
@@ -692,12 +753,22 @@ public:
         lrhi_compute_pass_dispatch(compute_pass, 16, 16, 16, 4, 4, 4, &lerr);
         if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
             lrhi_compute_pass_end(compute_pass, nullptr);
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            if (!compute_end_cmd(_device, queue, fence, cmd, nullptr, err)) {}
             return {false, std::string("compute_pass_dispatch: ") + lerr.message};
         }
 
         lrhi_compute_pass_end(compute_pass, &lerr);
 
-        if (!compute_end_cmd(_device, queue, fence, cmd, _rs, err)) return {false, err};
+        if (!compute_end_cmd(_device, queue, fence, cmd, run_rs, err)) {
+            lrhi_destroy_buffer(upload_staging);
+            lrhi_destroy_residency_set(run_rs);
+            return {false, err};
+        }
+
+        lrhi_destroy_buffer(upload_staging);
+        lrhi_destroy_residency_set(run_rs);
         return texture_test_result(_device, _output_texture, name, source_path, bake_mode);
     }
 
@@ -707,9 +778,9 @@ public:
         if (_input_view)      { lrhi_destroy_texture_view(_input_view);     _input_view      = nullptr; }
         if (_pipeline)        { lrhi_destroy_compute_pipeline(_pipeline);   _pipeline        = nullptr; }
         if (_compute_shader)  { lrhi_destroy_shader_module(_compute_shader); _compute_shader = nullptr; }
-        if (_rs)              { lrhi_destroy_residency_set(_rs);            _rs              = nullptr; }
         if (_output_texture)  { lrhi_destroy_texture(_output_texture);      _output_texture  = nullptr; }
         if (_input_texture)   { lrhi_destroy_texture(_input_texture);       _input_texture   = nullptr; }
+        _init_data.clear();
     }
 };
 

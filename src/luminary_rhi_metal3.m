@@ -190,6 +190,7 @@ static void            lrhi_metal3_get_texture_info(LRHITexture texture, LRHITex
 static void            lrhi_metal3_texture_replace_region(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
 static void            lrhi_metal3_texture_read_region(LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
 static void            lrhi_metal3_texture_readback(LRHIDevice device, LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
+static void            lrhi_metal3_texture_set_name(LRHITexture texture, const char* name);
 
 static void            lrhi_metal3_create_buffer(LRHIDevice device, LRHIBufferInfo* info, LRHIBuffer* out_buffer, LRHIError* out_error);
 static void            lrhi_metal3_destroy_buffer(LRHIBuffer buffer);
@@ -197,6 +198,7 @@ static void            lrhi_metal3_get_buffer_info(LRHIBuffer buffer, LRHIBuffer
 static void*           lrhi_metal3_buffer_map(LRHIBuffer buffer, LRHIError* out_error);
 static void            lrhi_metal3_buffer_unmap(LRHIBuffer buffer);
 static void            lrhi_metal3_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
+static void            lrhi_metal3_buffer_set_name(LRHIBuffer buffer, const char* name);
 
 static void            lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
 static void            lrhi_metal3_destroy_command_queue(LRHICommandQueue queue);
@@ -327,6 +329,7 @@ static const LRHITextureVTable lrhi_metal3_texture_vtable = {
     .get_texture_info       = lrhi_metal3_get_texture_info,
     .texture_replace_region = lrhi_metal3_texture_replace_region,
     .texture_read_region    = lrhi_metal3_texture_read_region,
+    .texture_set_name       = lrhi_metal3_texture_set_name,
 };
 
 static const LRHIBufferVTable lrhi_metal3_buffer_vtable = {
@@ -334,6 +337,7 @@ static const LRHIBufferVTable lrhi_metal3_buffer_vtable = {
     .get_buffer_info = lrhi_metal3_get_buffer_info,
     .buffer_map      = lrhi_metal3_buffer_map,
     .buffer_unmap    = lrhi_metal3_buffer_unmap,
+    .buffer_set_name = lrhi_metal3_buffer_set_name,
 };
 
 static const LRHICommandListVTable lrhi_metal3_command_list_vtable = {
@@ -589,6 +593,12 @@ static void lrhi_metal3_texture_readback(LRHIDevice device, LRHITexture texture,
     lrhi_metal3_texture_read_region(texture, region, mip_level, array_layer, out_data, data_size, bytes_per_row, bytes_per_image, out_error);
 }
 
+static void lrhi_metal3_texture_set_name(LRHITexture texture, const char* name)
+{
+    LRHITextureMetal3* metal_texture = (LRHITextureMetal3*)texture;
+    metal_texture->texture.label = [NSString stringWithUTF8String:name];
+}
+
 // Buffers
 
 static void lrhi_metal3_create_buffer(LRHIDevice device, LRHIBufferInfo* info, LRHIBuffer* out_buffer, LRHIError* out_error)
@@ -650,6 +660,12 @@ static void lrhi_metal3_buffer_readback(LRHIDevice device, LRHIBuffer buffer, vo
     }
 }
 
+static void lrhi_metal3_buffer_set_name(LRHIBuffer buffer, const char* name)
+{
+    LRHIBufferMetal3* metal_buffer = (LRHIBufferMetal3*)buffer;
+    metal_buffer->buffer.label = [NSString stringWithUTF8String:name];
+}
+
 // Command queue and fence
 
 static void lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
@@ -670,6 +686,17 @@ static void lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue
     out->queue = queue;
     out->device = metal_device->device;
     *out_queue = (LRHICommandQueue)out;
+
+#ifdef LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
+    MTLCaptureDescriptor* capture_desc = [[MTLCaptureDescriptor alloc] init];
+    capture_desc.captureObject = queue;
+
+    NSError* capture_error = nil;
+    [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:capture_desc error:&capture_error];
+    if (capture_error) {
+        NSLog(@"[LRHI] Metal3 programmatic capture failed to start: %@", capture_error);
+    }
+#endif
 }
 
 static void lrhi_metal3_destroy_command_queue(LRHICommandQueue queue)
@@ -725,6 +752,10 @@ static void lrhi_metal3_command_queue_submit(LRHICommandQueue queue, LRHICommand
     if (signal_fence) {
         lrhi_metal3_command_queue_signal(queue, signal_fence, signal_value, out_error);
     }
+
+#ifdef LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
+    [[MTLCaptureManager sharedCaptureManager] stopCapture];
+#endif
 }
 
 static void lrhi_metal3_command_queue_add_residency_set(LRHICommandQueue queue, LRHIResidencySet residency_set, LRHIError* out_error)
@@ -1105,7 +1136,7 @@ static void lrhi_metal3_create_texture_view(LRHIDevice device, LRHITextureViewIn
         return;
     }
 
-    if (info->usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || info->usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
+    if (info->usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || info->usage & LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
         out->bindless_index = lrhi_metal3_bindless_manager_write_texture_view(&metal_device->bindless_manager, out, out_error);
     }
     out->bindless_manager = &metal_device->bindless_manager;

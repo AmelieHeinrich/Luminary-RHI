@@ -58,6 +58,11 @@ void lrhi_texture_readback(LRHIDevice device, LRHITexture texture, LRHIRegion* r
     ((LRHIDeviceBase*)device)->vtable->texture_readback(device, texture, region, mip_level, array_layer, out_data, data_size, bytes_per_row, bytes_per_image, out_error);
 }
 
+void lrhi_texture_set_name(LRHITexture texture, const char* name)
+{
+    ((LRHITextureBase*)texture)->vtable->texture_set_name(texture, name);
+}
+
 void lrhi_create_buffer(LRHIDevice device, LRHIBufferInfo* info, LRHIBuffer* out_buffer, LRHIError* out_error)
 {
     ((LRHIDeviceBase*)device)->vtable->create_buffer(device, info, out_buffer, out_error);
@@ -86,6 +91,11 @@ void lrhi_buffer_unmap(LRHIBuffer buffer)
 void lrhi_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error)
 {
     ((LRHIDeviceBase*)device)->vtable->buffer_readback(device, buffer, out_data, data_size, out_error);
+}
+
+void lrhi_buffer_set_name(LRHIBuffer buffer, const char* name)
+{
+    ((LRHIBufferBase*)buffer)->vtable->buffer_set_name(buffer, name);
 }
 
 void lrhi_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
