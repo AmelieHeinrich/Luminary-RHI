@@ -482,3 +482,23 @@ uint32_t lrhi_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIErr
 {
     return ((LRHIBufferViewBase*)buffer_view)->vtable->get_bindless_index(buffer_view, out_error);
 }
+
+void lrhi_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_sampler(device, info, out_sampler, out_error);
+}
+
+void lrhi_destroy_sampler(LRHISampler sampler)
+{
+    ((LRHISamplerBase*)sampler)->vtable->destroy_sampler(sampler);
+}
+
+void lrhi_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info)
+{
+    ((LRHISamplerBase*)sampler)->vtable->get_sampler_info(sampler, out_info);
+}
+
+uint32_t lrhi_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error)
+{
+    return ((LRHISamplerBase*)sampler)->vtable->get_bindless_index(sampler, out_error);
+}

@@ -172,6 +172,15 @@ typedef struct LRHIBufferViewMetal3 {
     Metal3BindlessManager* bindless_manager;
 } LRHIBufferViewMetal3;
 
+typedef struct LRHISamplerMetal3 {
+    LRHISamplerBase base;
+    LRHISamplerInfo info;
+    id<MTLSamplerState> sampler_state;
+    uint32_t bindless_index;
+
+    Metal3BindlessManager* bindless_manager;
+} LRHISamplerMetal3;
+
 // Forward declarations
 static MTLPixelFormat            lrhi_metal3_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage           lrhi_metal3_texture_usage(LRHITextureUsage usage);
@@ -189,6 +198,9 @@ static MTLPrimitiveTopologyClass lrhi_metal3_primitive_topology_class_to_mtl(LRH
 static MTLBlendFactor            lrhi_metal3_blend_factor_to_mtl(LRHIBlendFactor factor);
 static MTLBlendOperation         lrhi_metal3_blend_op_to_mtl(LRHIBlendOperation op);
 static MTLCompareFunction        lrhi_metal3_compare_op_to_mtl(LRHICompareOperation op);
+static MTLSamplerAddressMode     lrhi_metal3_address_mode_to_mtl(LRHISamplerAddressMode mode);
+static MTLSamplerMinMagFilter    lrhi_metal3_filter_to_mtl(LRHISamplerFilter filter);
+static MTLSamplerMipFilter       lrhi_metal3_mip_filter_to_mtl(LRHISamplerFilter filter);
 
 static void            lrhi_metal3_destroy_device(LRHIDevice device);
 static LRHIDeviceInfo  lrhi_metal3_get_device_info(LRHIDevice device);
@@ -302,6 +314,11 @@ static void            lrhi_metal3_destroy_buffer_view(LRHIBufferView buffer_vie
 static void            lrhi_metal3_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info);
 static uint32_t        lrhi_metal3_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error);
 
+static void            lrhi_metal3_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error);
+static void            lrhi_metal3_destroy_sampler(LRHISampler sampler);
+static void            lrhi_metal3_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info);
+static uint32_t        lrhi_metal3_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal3_device_vtable = {
@@ -321,6 +338,7 @@ static const LRHIDeviceVTable lrhi_metal3_device_vtable = {
     .create_mesh_pipeline  = lrhi_metal3_create_mesh_pipeline,
     .create_compute_pipeline = lrhi_metal3_create_compute_pipeline,
     .create_buffer_view    = lrhi_metal3_create_buffer_view,
+    .create_sampler        = lrhi_metal3_create_sampler
 };
 
 static const LRHICommandQueueVTable lrhi_metal3_command_queue_vtable = {
@@ -457,6 +475,12 @@ static const LRHIBufferViewVTable lrhi_metal3_buffer_view_vtable = {
     .get_bindless_index = lrhi_metal3_buffer_view_get_bindless_index,
 };
 
+static const LRHISamplerVTable lrhi_metal3_sampler_vtable = {
+    .destroy_sampler = lrhi_metal3_destroy_sampler,
+    .get_sampler_info = lrhi_metal3_get_sampler_info,
+    .get_bindless_index = lrhi_metal3_sampler_get_bindless_index,
+};
+
 // Bindless manager
 static void lrhi_metal3_bindless_manager_init(Metal3BindlessManager* manager, LRHIDeviceMetal3* device, LRHIError* out_error)
 {
@@ -497,11 +521,26 @@ static uint32_t lrhi_metal3_bindless_manager_write_buffer_view(Metal3BindlessMan
     return index;
 }
 
-// TODO: Write sampler
+static uint32_t lrhi_metal3_bindless_manager_write_sampler(Metal3BindlessManager* manager, LRHISamplerMetal3* sampler, LRHIError* out_error)
+{
+    IRDescriptorTableEntry entry;
+    IRDescriptorTableSetSampler(&entry, sampler->sampler_state, 0);
+
+    uint32_t index = lrhi_freelist_allocate(&manager->sampler_heap_free_list);
+    memcpy(&manager->mapped_sampler_heap[index], &entry, sizeof(IRDescriptorTableEntry));
+    return index;
+}
+
 // TODO: Write acceleration structure
+
 static void lrhi_metal3_bindless_manager_free_resource_view(Metal3BindlessManager* manager, uint32_t index)
 {
     lrhi_freelist_free(&manager->resource_heap_free_list, index);
+}
+
+static void lrhi_metal3_bindless_manager_free_sampler(Metal3BindlessManager* manager, uint32_t index)
+{
+    lrhi_freelist_free(&manager->sampler_heap_free_list, index);
 }
 
 // Device
@@ -1791,6 +1830,55 @@ static uint32_t lrhi_metal3_buffer_view_get_bindless_index(LRHIBufferView buffer
     return metal_buffer_view->bindless_index;
 }
 
+// Sampler
+
+static void lrhi_metal3_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error)
+{
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
+
+    MTLSamplerDescriptor* descriptor = [[MTLSamplerDescriptor alloc] init];
+    descriptor.minFilter = lrhi_metal3_filter_to_mtl(info->min_filter);
+    descriptor.magFilter = lrhi_metal3_filter_to_mtl(info->mag_filter);
+    descriptor.mipFilter = lrhi_metal3_mip_filter_to_mtl(info->mipmap_filter);
+    descriptor.sAddressMode = lrhi_metal3_address_mode_to_mtl(info->address_mode_u);
+    descriptor.tAddressMode = lrhi_metal3_address_mode_to_mtl(info->address_mode_v);
+    descriptor.rAddressMode = lrhi_metal3_address_mode_to_mtl(info->address_mode_w);
+    descriptor.lodMinClamp = info->min_lod;
+    descriptor.lodMaxClamp = info->max_lod;
+    descriptor.maxAnisotropy = info->anisotropy_enable ? 16.0f : 1.0f;
+    if (info->compare_enable) {
+        descriptor.compareFunction = lrhi_metal3_compare_op_to_mtl(info->compare_op);
+    }
+    descriptor.supportArgumentBuffers = YES;
+
+    LRHISamplerMetal3* out = malloc(sizeof(LRHISamplerMetal3));
+    out->base.vtable = &lrhi_metal3_sampler_vtable;
+    out->info = *info;
+    out->sampler_state = [metal_device->device newSamplerStateWithDescriptor:descriptor];
+    out->bindless_index = lrhi_metal3_bindless_manager_write_sampler(&metal_device->bindless_manager, out, out_error);
+    out->bindless_manager = &metal_device->bindless_manager;
+    *out_sampler = (LRHISampler)out;
+}
+
+static void lrhi_metal3_destroy_sampler(LRHISampler sampler)
+{
+    LRHISamplerMetal3* metal_sampler = (LRHISamplerMetal3*)sampler;
+    lrhi_metal3_bindless_manager_free_sampler(metal_sampler->bindless_manager, metal_sampler->bindless_index);
+    free(sampler);
+}
+
+static void lrhi_metal3_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info)
+{
+    LRHISamplerMetal3* metal_sampler = (LRHISamplerMetal3*)sampler;
+    *out_info = metal_sampler->info;
+}
+
+static uint32_t lrhi_metal3_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error)
+{
+    LRHISamplerMetal3* metal_sampler = (LRHISamplerMetal3*)sampler;
+    return metal_sampler->bindless_index;
+}
+
 // Utils
 
 static void lrhi_metal3_validate_texture_info(LRHITextureInfo* info, LRHIError* out_error)
@@ -1979,6 +2067,35 @@ static MTLCompareFunction lrhi_metal3_compare_op_to_mtl(LRHICompareOperation op)
         case LUMINARY_RHI_COMPARE_OPERATION_GREATER_EQUAL: return MTLCompareFunctionGreaterEqual;
         case LUMINARY_RHI_COMPARE_OPERATION_ALWAYS: return MTLCompareFunctionAlways;
         default: return MTLCompareFunctionAlways;
+    }
+}
+
+static MTLSamplerAddressMode lrhi_metal3_address_mode_to_mtl(LRHISamplerAddressMode mode)
+{
+    switch (mode) {
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_REPEAT: return MTLSamplerAddressModeRepeat;
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: return MTLSamplerAddressModeMirrorRepeat;
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: return MTLSamplerAddressModeClampToEdge;
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER: return MTLSamplerAddressModeClampToBorderColor;
+        default: return MTLSamplerAddressModeRepeat;
+    }
+}
+
+static MTLSamplerMinMagFilter lrhi_metal3_filter_to_mtl(LRHISamplerFilter filter)
+{
+    switch (filter) {
+        case LUMINARY_RHI_SAMPLER_FILTER_NEAREST: return MTLSamplerMinMagFilterNearest;
+        case LUMINARY_RHI_SAMPLER_FILTER_LINEAR: return MTLSamplerMinMagFilterLinear;
+        default: return MTLSamplerMinMagFilterNearest;
+    }
+}
+
+static MTLSamplerMipFilter lrhi_metal3_mip_filter_to_mtl(LRHISamplerFilter filter)
+{
+    switch (filter) {
+        case LUMINARY_RHI_SAMPLER_FILTER_NEAREST: return MTLSamplerMipFilterNotMipmapped;
+        case LUMINARY_RHI_SAMPLER_FILTER_LINEAR: return MTLSamplerMipFilterLinear;
+        default: return MTLSamplerMipFilterNotMipmapped;
     }
 }
 

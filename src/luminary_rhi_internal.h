@@ -20,6 +20,7 @@ typedef struct LRHIDeviceVTable {
     void           (*create_mesh_pipeline)(LRHIDevice device, LRHIMeshPipelineInfo* info, LRHIMeshPipeline* out_pipeline, LRHIError* out_error);
     void           (*create_compute_pipeline)(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error);
     void           (*create_buffer_view)(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error);
+    void           (*create_sampler)(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -147,6 +148,12 @@ typedef struct LRHIBufferViewVTable {
     uint32_t (*get_bindless_index)(LRHIBufferView buffer_view, LRHIError* out_error);
 } LRHIBufferViewVTable;
 
+typedef struct LRHISamplerVTable {
+    void (*destroy_sampler)(LRHISampler sampler);
+    void (*get_sampler_info)(LRHISampler sampler, LRHISamplerInfo* out_info);
+    uint32_t (*get_bindless_index)(LRHISampler sampler, LRHIError* out_error);
+} LRHISamplerVTable;
+
 // Base structs — must be the first member of every backend struct.
 typedef struct LRHIDeviceBase          { const LRHIDeviceVTable*          vtable; } LRHIDeviceBase;
 typedef struct LRHICommandQueueBase    { const LRHICommandQueueVTable*    vtable; } LRHICommandQueueBase;
@@ -165,6 +172,7 @@ typedef struct LRHIMeshPipelineBase    { const LRHIMeshPipelineVTable*    vtable
 typedef struct LRHIComputePipelineBase { const LRHIComputePipelineVTable* vtable; } LRHIComputePipelineBase;
 typedef struct LRHIComputePassBase     { const LRHIComputePassVTable*     vtable; } LRHIComputePassBase;
 typedef struct LRHIBufferViewBase      { const LRHIBufferViewVTable*      vtable; } LRHIBufferViewBase;
+typedef struct LRHISamplerBase         { const LRHISamplerVTable*         vtable; } LRHISamplerBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

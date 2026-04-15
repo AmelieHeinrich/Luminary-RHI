@@ -1,7 +1,5 @@
 ## RHI
 
-- Buffer views
-- Samplers
 - Execute indirect
 - Acceleration structure
 

@@ -140,6 +140,19 @@ typedef enum LRHIBufferViewType {
     LUMINARY_RHI_BUFFER_VIEW_TYPE_READWRITE_RAW // RWByteAddressBuffer
 } LRHIBufferViewType;
 
+typedef enum LRHISamplerFilter {
+    LUMINARY_RHI_SAMPLER_FILTER_NEAREST,
+    LUMINARY_RHI_SAMPLER_FILTER_LINEAR,
+    LUMINARY_RHI_SAMPLER_FILTER_ANISOTROPIC
+} LRHISamplerFilter;
+
+typedef enum LRHISamplerAddressMode {
+    LUMINARY_RHI_SAMPLER_ADDRESS_MODE_REPEAT,
+    LUMINARY_RHI_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+    LUMINARY_RHI_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    LUMINARY_RHI_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER
+} LRHISamplerAddressMode;
+
 #define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
 #define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
 
@@ -323,6 +336,21 @@ typedef struct LRHIBufferViewInfo {
     LRHIBufferViewType view_type;
 } LRHIBufferViewInfo;
 
+typedef struct LRHISamplerInfo {
+    LRHISamplerFilter min_filter;
+    LRHISamplerFilter mag_filter;
+    LRHISamplerFilter mipmap_filter;
+    LRHISamplerAddressMode address_mode_u;
+    LRHISamplerAddressMode address_mode_v;
+    LRHISamplerAddressMode address_mode_w;
+    float mip_lod_bias;
+    uint8_t anisotropy_enable;
+    uint8_t compare_enable;
+    LRHICompareOperation compare_op;
+    float min_lod;
+    float max_lod;
+} LRHISamplerInfo;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -460,11 +488,14 @@ void lrhi_destroy_buffer_view(LRHIBufferView buffer_view);
 void lrhi_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info);
 uint32_t lrhi_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error);
 
+// Sampler
+void lrhi_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error);
+void lrhi_destroy_sampler(LRHISampler sampler);
+void lrhi_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info);
+uint32_t lrhi_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error);
+
 /*
     TODO:
-        Sampler:
-            - create/destroy
-            - get info
         Render Pass:
             - execute indirect
         Compute Pass:

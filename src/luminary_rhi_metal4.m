@@ -161,6 +161,15 @@ typedef struct LRHIBufferViewMetal4 {
     Metal4BindlessManager* bindless_manager;
 } LRHIBufferViewMetal4;
 
+typedef struct LRHISamplerMetal4 {
+    LRHISamplerBase base;
+    LRHISamplerInfo info;
+    uint32_t bindless_index;
+    id<MTLSamplerState> sampler_state;
+
+    Metal4BindlessManager* bindless_manager;
+} LRHISamplerMetal4;
+
 // Forward declarations
 static MTLPixelFormat            lrhi_metal4_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage           lrhi_metal4_texture_usage(LRHITextureUsage usage);
@@ -177,6 +186,9 @@ static MTLPrimitiveTopologyClass lrhi_metal4_primitive_topology_class_to_mtl(LRH
 static MTLBlendFactor            lrhi_metal4_blend_factor_to_mtl(LRHIBlendFactor factor);
 static MTLBlendOperation         lrhi_metal4_blend_op_to_mtl(LRHIBlendOperation op);
 static MTLCompareFunction        lrhi_metal4_compare_op_to_mtl(LRHICompareOperation op);
+static MTLSamplerAddressMode     lrhi_metal4_address_mode_to_mtl(LRHISamplerAddressMode mode);
+static MTLSamplerMinMagFilter    lrhi_metal4_filter_to_mtl(LRHISamplerFilter filter);
+static MTLSamplerMipFilter       lrhi_metal4_mip_filter_to_mtl(LRHISamplerFilter filter);
 
 static void            lrhi_metal4_destroy_device(LRHIDevice device);
 static LRHIDeviceInfo  lrhi_metal4_get_device_info(LRHIDevice device);
@@ -289,6 +301,11 @@ static void            lrhi_metal4_destroy_buffer_view(LRHIBufferView buffer_vie
 static void            lrhi_metal4_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info);
 static uint32_t        lrhi_metal4_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error);
 
+static void            lrhi_metal4_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error);
+static void            lrhi_metal4_destroy_sampler(LRHISampler sampler);
+static void            lrhi_metal4_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info);
+static uint32_t        lrhi_metal4_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error);
+
 // Vtable instances
 
 static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
@@ -308,6 +325,7 @@ static const LRHIDeviceVTable lrhi_metal4_device_vtable = {
     .create_mesh_pipeline = lrhi_metal4_create_mesh_pipeline,
     .create_compute_pipeline = lrhi_metal4_create_compute_pipeline,
     .create_buffer_view = lrhi_metal4_create_buffer_view,
+    .create_sampler = lrhi_metal4_create_sampler,
 };
 
 static const LRHICommandQueueVTable lrhi_metal4_command_queue_vtable = {
@@ -444,6 +462,12 @@ static const LRHIBufferViewVTable lrhi_metal4_buffer_view_vtable = {
     .get_bindless_index = lrhi_metal4_buffer_view_get_bindless_index,
 };
 
+static const LRHISamplerVTable lrhi_metal4_sampler_vtable = {
+    .destroy_sampler = lrhi_metal4_destroy_sampler,
+    .get_sampler_info = lrhi_metal4_get_sampler_info,
+    .get_bindless_index = lrhi_metal4_sampler_get_bindless_index,
+};
+
 // Bindless manager
 static void lrhi_metal4_bindless_manager_init(Metal4BindlessManager* manager, LRHIDeviceMetal4* device, LRHIError* out_error)
 {
@@ -470,6 +494,12 @@ static uint32_t lrhi_metal4_bindless_manager_find_free_resource(Metal4BindlessMa
     return index;
 }
 
+static uint32_t lrhi_metal4_bindless_manager_find_free_sampler(Metal4BindlessManager* manager)
+{
+    uint32_t index = lrhi_freelist_allocate(&manager->sampler_heap_free_list);
+    return index;
+}
+
 static uint32_t lrhi_metal4_bindless_manager_write_texture_view(Metal4BindlessManager* manager, LRHITextureViewMetal4* texture_view, uint32_t index)
 {
     IRDescriptorTableEntry entry;
@@ -489,11 +519,24 @@ static uint32_t lrhi_metal4_bindless_manager_write_buffer_view(Metal4BindlessMan
     return index;
 }
 
-// TODO: Write sampler
+static uint32_t lrhi_metal4_bindless_manager_write_sampler(Metal4BindlessManager* manager, LRHISamplerMetal4* sampler, uint32_t index)
+{
+    IRDescriptorTableEntry entry;
+    IRDescriptorTableSetSampler(&entry, sampler->sampler_state, 0.0f);
+
+    memcpy(&manager->mapped_sampler_heap[index], &entry, sizeof(IRDescriptorTableEntry));
+    return index;
+}
+
 // TODO: Write acceleration structure
 static void lrhi_metal4_bindless_manager_free_resource_view(Metal4BindlessManager* manager, uint32_t index)
 {
     lrhi_freelist_free(&manager->resource_heap_free_list, index);
+}
+
+static void lrhi_metal4_bindless_manager_free_sampler(Metal4BindlessManager* manager, uint32_t index)
+{
+    lrhi_freelist_free(&manager->sampler_heap_free_list, index);
 }
 
 // Device
@@ -1959,6 +2002,63 @@ static uint32_t lrhi_metal4_buffer_view_get_bindless_index(LRHIBufferView buffer
     return metal_buffer_view->bindless_index;
 }
 
+// Sampler
+
+static void lrhi_metal4_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error)
+{
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
+
+    MTLSamplerDescriptor* descriptor = [[MTLSamplerDescriptor alloc] init];
+    descriptor.minFilter = lrhi_metal4_filter_to_mtl(info->min_filter);
+    descriptor.magFilter = lrhi_metal4_filter_to_mtl(info->mag_filter);
+    descriptor.mipFilter = lrhi_metal4_mip_filter_to_mtl(info->mipmap_filter);
+    descriptor.sAddressMode = lrhi_metal4_address_mode_to_mtl(info->address_mode_u);
+    descriptor.tAddressMode = lrhi_metal4_address_mode_to_mtl(info->address_mode_v);
+    descriptor.rAddressMode = lrhi_metal4_address_mode_to_mtl(info->address_mode_w);
+    descriptor.lodMinClamp = info->min_lod;
+    descriptor.lodMaxClamp = info->max_lod;
+    descriptor.maxAnisotropy = info->anisotropy_enable ? 16.0f : 1.0f;
+    if (info->compare_enable) {
+        descriptor.compareFunction = lrhi_metal4_compare_op_to_mtl(info->compare_op);
+    }
+    descriptor.supportArgumentBuffers = YES;
+
+    LRHISamplerMetal4* out = malloc(sizeof(LRHISamplerMetal4));
+    out->base.vtable = &lrhi_metal4_sampler_vtable;
+    out->info = *info;
+    out->sampler_state = [metal_device->device newSamplerStateWithDescriptor:descriptor];
+    out->bindless_index = lrhi_metal4_bindless_manager_find_free_sampler(&metal_device->bindless_manager);
+    lrhi_metal4_bindless_manager_write_sampler(&metal_device->bindless_manager, out, out->bindless_index);
+    out->bindless_manager = &metal_device->bindless_manager;
+    *out_sampler = (LRHISampler)out;
+}
+
+static void lrhi_metal4_destroy_sampler(LRHISampler sampler)
+{
+    LRHISamplerMetal4* metal_sampler = (LRHISamplerMetal4*)sampler;
+    lrhi_metal4_bindless_manager_free_sampler(metal_sampler->bindless_manager, metal_sampler->bindless_index);
+    free(sampler);
+}
+
+static void lrhi_metal4_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info)
+{
+    LRHISamplerMetal4* metal_sampler = (LRHISamplerMetal4*)sampler;
+    *out_info = metal_sampler->info;
+}
+
+static uint32_t lrhi_metal4_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error)
+{
+    LRHISamplerMetal4* metal_sampler = (LRHISamplerMetal4*)sampler;
+    if (metal_sampler->bindless_index == UINT32_MAX) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Sampler does not have a valid bindless index");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return UINT32_MAX;
+    }
+    return metal_sampler->bindless_index;
+}
+
 // Utils
 
 static MTLStages lrhi_metal4_render_stage_to_mtl(LRHIRenderStage stage)
@@ -2093,6 +2193,35 @@ static MTLCompareFunction lrhi_metal4_compare_op_to_mtl(LRHICompareOperation op)
         case LUMINARY_RHI_COMPARE_OPERATION_GREATER_EQUAL: return MTLCompareFunctionGreaterEqual;
         case LUMINARY_RHI_COMPARE_OPERATION_ALWAYS: return MTLCompareFunctionAlways;
         default: return MTLCompareFunctionAlways;
+    }
+}
+
+static MTLSamplerAddressMode lrhi_metal4_address_mode_to_mtl(LRHISamplerAddressMode mode)
+{
+    switch (mode) {
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_REPEAT: return MTLSamplerAddressModeRepeat;
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: return MTLSamplerAddressModeMirrorRepeat;
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: return MTLSamplerAddressModeClampToEdge;
+        case LUMINARY_RHI_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER: return MTLSamplerAddressModeClampToBorderColor;
+        default: return MTLSamplerAddressModeRepeat;
+    }
+}
+
+static MTLSamplerMinMagFilter lrhi_metal4_filter_to_mtl(LRHISamplerFilter filter)
+{
+    switch (filter) {
+        case LUMINARY_RHI_SAMPLER_FILTER_NEAREST: return MTLSamplerMinMagFilterNearest;
+        case LUMINARY_RHI_SAMPLER_FILTER_LINEAR: return MTLSamplerMinMagFilterLinear;
+        default: return MTLSamplerMinMagFilterNearest;
+    }
+}
+
+static MTLSamplerMipFilter lrhi_metal4_mip_filter_to_mtl(LRHISamplerFilter filter)
+{
+    switch (filter) {
+        case LUMINARY_RHI_SAMPLER_FILTER_NEAREST: return MTLSamplerMipFilterNotMipmapped;
+        case LUMINARY_RHI_SAMPLER_FILTER_LINEAR: return MTLSamplerMipFilterLinear;
+        default: return MTLSamplerMipFilterNotMipmapped;
     }
 }
 
