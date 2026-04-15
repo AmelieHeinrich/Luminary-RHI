@@ -55,6 +55,9 @@ typedef struct LRHIBufferMetal3 {
     LRHIBufferBase base;
     id<MTLBuffer> buffer;
     LRHIBufferInfo info;
+
+    id<MTLIndirectCommandBuffer> icb;
+    LRHICommandType icb_command_type;
 } LRHIBufferMetal3;
 
 typedef struct LRHICommandQueueMetal3 {
@@ -220,6 +223,7 @@ static void*           lrhi_metal3_buffer_map(LRHIBuffer buffer, LRHIError* out_
 static void            lrhi_metal3_buffer_unmap(LRHIBuffer buffer);
 static void            lrhi_metal3_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
 static void            lrhi_metal3_buffer_set_name(LRHIBuffer buffer, const char* name);
+static void            lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHICommandType command_type, LRHIError* out_error);
 
 static void            lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
 static void            lrhi_metal3_destroy_command_queue(LRHICommandQueue queue);
@@ -735,6 +739,45 @@ static void lrhi_metal3_buffer_set_name(LRHIBuffer buffer, const char* name)
     metal_buffer->buffer.label = [NSString stringWithUTF8String:name];
 }
 
+static void lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHICommandType command_type, LRHIError* out_error)
+{
+    LRHIBufferMetal3* metal_buffer = (LRHIBufferMetal3*)buffer;
+    metal_buffer->icb_command_type = command_type;
+
+    // Create ICB
+    MTLIndirectCommandBufferDescriptor* icb_descriptor = [[MTLIndirectCommandBufferDescriptor alloc] init];
+    icb_descriptor.inheritTriangleFillMode = YES;
+    icb_descriptor.inheritDepthBias = YES;
+    icb_descriptor.inheritDepthClipMode = YES;
+    icb_descriptor.inheritPipelineState = YES;
+    icb_descriptor.inheritBuffers = YES;
+    icb_descriptor.inheritDepthStencilState = YES;
+    icb_descriptor.inheritFrontFacingWinding = YES;
+    switch (command_type) {
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW:
+            icb_descriptor.commandTypes = MTLIndirectCommandTypeDraw;
+            break;
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW_INDEXED:
+            icb_descriptor.commandTypes = MTLIndirectCommandTypeDrawIndexed;
+            break;
+        case LUMINARY_RHI_COMMAND_TYPE_DISPATCH:
+            icb_descriptor.commandTypes = MTLIndirectCommandTypeConcurrentDispatchThreads;
+            break;
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS:
+            icb_descriptor.commandTypes = MTLIndirectCommandTypeDrawMeshThreadgroups;
+            break;
+        default:
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Invalid command type for indirect command buffer");
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            return;
+    }
+
+    uint32_t command_count = (uint32_t)(metal_buffer->info.size / metal_buffer->info.stride);
+    metal_buffer->icb = [metal_buffer->buffer.device newIndirectCommandBufferWithDescriptor:icb_descriptor maxCommandCount:command_count options:MTLResourceStorageModeShared];
+}
+
 // Command queue and fence
 
 static void lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error)
@@ -1125,6 +1168,9 @@ static void lrhi_metal3_residency_set_add_buffer(LRHIResidencySet residency_set,
     LRHIBufferMetal3* metal_buffer = (LRHIBufferMetal3*)buffer;
 
     [metal_residency_set->residency_set addAllocation:metal_buffer->buffer];
+    if (metal_buffer->icb) {
+        [metal_residency_set->residency_set addAllocation:metal_buffer->icb];
+    }
 }
 
 static void lrhi_metal3_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
@@ -1141,6 +1187,9 @@ static void lrhi_metal3_residency_set_remove_buffer(LRHIResidencySet residency_s
     LRHIBufferMetal3* metal_buffer = (LRHIBufferMetal3*)buffer;
 
     [metal_residency_set->residency_set removeAllocation:metal_buffer->buffer];
+    if (metal_buffer->icb) {
+        [metal_residency_set->residency_set removeAllocation:metal_buffer->icb];
+    }
 }
 
 static void lrhi_metal3_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error)

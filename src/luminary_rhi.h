@@ -153,6 +153,13 @@ typedef enum LRHISamplerAddressMode {
     LUMINARY_RHI_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER
 } LRHISamplerAddressMode;
 
+typedef enum LRHICommandType {
+    LUMINARY_RHI_COMMAND_TYPE_DRAW,
+    LUMINARY_RHI_COMMAND_TYPE_DRAW_INDEXED,
+    LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS,
+    LUMINARY_RHI_COMMAND_TYPE_DISPATCH
+} LRHICommandType;
+
 #define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
 #define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
 
@@ -351,6 +358,49 @@ typedef struct LRHISamplerInfo {
     float max_lod;
 } LRHISamplerInfo;
 
+typedef struct LRHIDrawIndirectCommand {
+    uint32_t draw_id;
+    uint32_t vertex_count;
+    uint32_t instance_count;
+    uint32_t first_vertex;
+    uint32_t first_instance;
+} LRHIDrawIndirectCommand;
+
+typedef struct LRHIDrawIndexedIndirectCommand {
+    uint32_t draw_id;
+    uint32_t index_count;
+    uint32_t instance_count;
+    uint32_t first_index;
+    int32_t vertex_offset;
+    uint32_t first_instance;
+} LRHIDrawIndexedIndirectCommand;
+
+typedef struct LRHIDispatchIndirectCommand {
+    uint32_t num_groups_x;
+    uint32_t num_groups_y;
+    uint32_t num_groups_z;
+} LRHIDispatchIndirectCommand;
+
+typedef struct LRHIDrawMeshTasksIndirectCommand {
+    uint32_t draw_id;
+    uint32_t num_groups_x;
+    uint32_t num_groups_y;
+    uint32_t num_groups_z;
+} LRHIDrawMeshTasksIndirectCommand;
+
+// On Metal, we need a bunch of other parameters to do the conversion between
+// Vulkan/D3D12 generated indirect buffer to Metal ICB.
+// Fill this in depending on what kinda draw command you're using
+typedef struct LRHIDrawIndirectParameters {
+    LRHIBuffer index_buffer;
+    uint32_t threads_per_object_groups_x;
+    uint32_t threads_per_object_groups_y;
+    uint32_t threads_per_object_groups_z;
+    uint32_t threads_per_mesh_groups_x;
+    uint32_t threads_per_mesh_groups_y;
+    uint32_t threads_per_mesh_groups_z;
+} LRHIDrawIndirectParameters;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -377,6 +427,8 @@ void lrhi_get_buffer_info(LRHIBuffer buffer, LRHIBufferInfo* out_info);
 void* lrhi_buffer_map(LRHIBuffer buffer, LRHIError* out_error);
 void lrhi_buffer_unmap(LRHIBuffer buffer);
 void lrhi_buffer_set_name(LRHIBuffer buffer, const char* name);
+// This is used in the Metal backend to create the indirect command buffer
+void lrhi_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHICommandType command_type, LRHIError* out_error);
 
 // Used by tests to force a texture readback operation without having to worry about synchronization or staging buffers. Not intended for general use.
 void lrhi_texture_readback(LRHIDevice device, LRHITexture texture, LRHIRegion* region, uint32_t mip_level, uint32_t array_layer, void* out_data, uint32_t data_size, uint32_t bytes_per_row, uint32_t bytes_per_image, LRHIError* out_error);
@@ -403,6 +455,9 @@ void lrhi_destroy_command_list(LRHICommandList command_list);
 void lrhi_command_list_begin(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_command_list_end(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error);
+
+// Do this outside of any command passes to prepare an indirect command buffer for execution. This is only necessary on Metal, which requires a special indirect command buffer format. On other platforms, this is a no-op.
+void lrhi_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, uint64_t count, LRHIDrawIndirectParameters* parameters, LRHIError* out_error);
 
 // Copy pass functions
 LRHICopyPass lrhi_copy_pass_begin(LRHICommandList command_list, LRHIError* out_error);

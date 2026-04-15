@@ -53,6 +53,7 @@ typedef struct LRHIBufferVTable {
     void* (*buffer_map)(LRHIBuffer buffer, LRHIError* out_error);
     void  (*buffer_unmap)(LRHIBuffer buffer);
     void  (*buffer_set_name)(LRHIBuffer buffer, const char* name);
+    void  (*buffer_set_indirect_command_type)(LRHIBuffer buffer, LRHICommandType command_type, LRHIError* out_error);
 } LRHIBufferVTable;
 
 typedef struct LRHICommandListVTable {
@@ -60,6 +61,7 @@ typedef struct LRHICommandListVTable {
     void (*command_list_begin)(LRHICommandList command_list, LRHIError* out_error);
     void (*command_list_end)(LRHICommandList command_list, LRHIError* out_error);
     void (*command_list_reset)(LRHICommandList command_list, LRHIError* out_error);
+    void (*command_list_prepare_indirect_commands)(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, uint64_t count, LRHIDrawIndirectParameters* parameters, LRHIError* out_error);
     LRHICopyPass (*copy_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
     LRHIRenderPass (*render_pass_begin)(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
     LRHIComputePass (*compute_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
