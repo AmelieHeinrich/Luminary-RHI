@@ -61,7 +61,7 @@ typedef struct LRHICommandListVTable {
     void (*command_list_begin)(LRHICommandList command_list, LRHIError* out_error);
     void (*command_list_end)(LRHICommandList command_list, LRHIError* out_error);
     void (*command_list_reset)(LRHICommandList command_list, LRHIError* out_error);
-    void (*command_list_prepare_indirect_commands)(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, uint64_t count, LRHIDrawIndirectParameters* parameters, LRHIError* out_error);
+    void (*command_list_prepare_indirect_commands)(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t maxCommandCount, LRHIDrawIndirectParameters* parameters, LRHIRenderPipeline pipeline, const void* push_constants, uint32_t push_constant_size, LRHIError* out_error);
     LRHICopyPass (*copy_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
     LRHIRenderPass (*render_pass_begin)(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
     LRHIComputePass (*compute_pass_begin)(LRHICommandList command_list, LRHIError* out_error);

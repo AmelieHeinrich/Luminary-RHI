@@ -183,9 +183,9 @@ void lrhi_command_list_reset(LRHICommandList command_list, LRHIError* out_error)
     ((LRHICommandListBase*)command_list)->vtable->command_list_reset(command_list, out_error);
 }
 
-void lrhi_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, uint64_t count, LRHIDrawIndirectParameters* parameters, LRHIError* out_error)
+void lrhi_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t maxCommandCount, LRHIDrawIndirectParameters* parameters, LRHIRenderPipeline pipeline, const void* push_constants, uint32_t push_constant_size, LRHIError* out_error)
 {
-    ((LRHICommandListBase*)command_list)->vtable->command_list_prepare_indirect_commands(command_list, indirect_command_buffer, count, parameters, out_error);
+    ((LRHICommandListBase*)command_list)->vtable->command_list_prepare_indirect_commands(command_list, indirect_command_buffer, count_buffer, maxCommandCount, parameters, pipeline, push_constants, push_constant_size, out_error);
 }
 
 LRHICopyPass lrhi_copy_pass_begin(LRHICommandList command_list, LRHIError* out_error)

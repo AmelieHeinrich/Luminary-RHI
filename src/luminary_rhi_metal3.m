@@ -14,6 +14,37 @@
 #define IR_PRIVATE_IMPLEMENTATION
 #endif
 #include "ext/metal_irconverter_runtime.h"
+#include "ext/icb_shaders.h"
+
+// ICB parameter argument structs
+typedef struct Metal3ICBDrawParameters {
+    MTLResourceID icb;
+} Metal3ICBDrawParameters;
+
+typedef struct Metal3ICBDrawIndexedParameters {
+    MTLResourceID icb;
+    MTLGPUAddress index_buffer;
+} Metal3ICBDrawIndexedParameters;
+
+typedef struct Metal3ICBDispatchParameters {
+    MTLResourceID icb;
+
+    uint32_t threads_per_group_x;
+    uint32_t threads_per_group_y;
+    uint32_t threads_per_group_z;
+} Metal3ICBDispatchParameters;
+
+typedef struct Metal3ICBDrawMeshTasksParameters {
+    MTLResourceID icb;
+
+    uint32_t threads_per_object_group_x;
+    uint32_t threads_per_object_group_y;
+    uint32_t threads_per_object_group_z;
+
+    uint32_t threads_per_mesh_group_x;
+    uint32_t threads_per_mesh_group_y;
+    uint32_t threads_per_mesh_group_z;
+} Metal3ICBDrawMeshTasksParameters;
 
 typedef struct Metal3BindlessManager {
     id<MTLBuffer> resource_heap_buffer;
@@ -42,6 +73,11 @@ typedef struct LRHIDeviceMetal3 {
     id<MTLDevice> device;
     uint8_t enable_debug;
 
+    id<MTLComputePipelineState> draw_icb_pipe;
+    id<MTLComputePipelineState> draw_indexed_icb_pipe;
+    id<MTLComputePipelineState> dispatch_icb_pipe;
+    id<MTLComputePipelineState> draw_mesh_tasks_icb_pipe;
+
     Metal3BindlessManager bindless_manager;
 } LRHIDeviceMetal3;
 
@@ -56,7 +92,12 @@ typedef struct LRHIBufferMetal3 {
     id<MTLBuffer> buffer;
     LRHIBufferInfo info;
 
+    // All the indirect stuff
     id<MTLIndirectCommandBuffer> icb;
+    id<MTLBuffer> icb_params;
+    id<MTLBuffer> draw_id_atomic;
+    id<MTLBuffer> per_draw_constants;
+    id<MTLBuffer> primitive_type_buf;
     LRHICommandType icb_command_type;
 } LRHIBufferMetal3;
 
@@ -65,6 +106,8 @@ typedef struct LRHICommandQueueMetal3 {
     id<MTLCommandQueue>  queue;
     id<MTLDevice>        device;
     uint8_t              is_capture_enabled;
+
+    LRHIDeviceMetal3* device_ref;
 } LRHICommandQueueMetal3;
 
 typedef struct LRHIFenceWaiterMetal3 {
@@ -85,6 +128,8 @@ typedef struct LRHICommandListMetal3 {
     id<MTLCommandBuffer> command_buffer;
     id<MTLBuffer> push_constant_buffer;
     uint32_t push_constant_offset;
+
+    LRHIDeviceMetal3* device;
 } LRHICommandListMetal3;
 
 typedef struct LRHICopyPassMetal3 {
@@ -244,8 +289,9 @@ static void            lrhi_metal3_destroy_command_list(LRHICommandList command_
 static void            lrhi_metal3_command_list_begin(LRHICommandList command_list, LRHIError* out_error);
 static void            lrhi_metal3_command_list_end(LRHICommandList command_list, LRHIError* out_error);
 static void            lrhi_metal3_command_list_reset(LRHICommandList command_list, LRHIError* out_error);
-static LRHICopyPass    lrhi_metal3_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error);
+static void            lrhi_metal3_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t maxCommandCount, LRHIDrawIndirectParameters* parameters, LRHIRenderPipeline pipeline, const void* push_constants, uint32_t push_constant_size, LRHIError* out_error);
 
+static LRHICopyPass   lrhi_metal3_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error);
 static void           lrhi_metal3_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
 static void           lrhi_metal3_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error) { (void)copy_pass; (void)out_error; /* No-op since Metal automatically handles synchronization between blit commands within the same encoder */ }
 static void           lrhi_metal3_copy_pass_encoder_barrier(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error);
@@ -378,13 +424,14 @@ static const LRHIBufferVTable lrhi_metal3_buffer_vtable = {
 };
 
 static const LRHICommandListVTable lrhi_metal3_command_list_vtable = {
-    .destroy_command_list = lrhi_metal3_destroy_command_list,
-    .command_list_begin   = lrhi_metal3_command_list_begin,
-    .command_list_end     = lrhi_metal3_command_list_end,
-    .command_list_reset   = lrhi_metal3_command_list_reset,
-    .copy_pass_begin      = lrhi_metal3_command_list_begin_copy_pass,
-    .render_pass_begin    = lrhi_metal3_render_pass_begin,
-    .compute_pass_begin   = lrhi_metal3_compute_pass_begin,
+    .destroy_command_list                   = lrhi_metal3_destroy_command_list,
+    .command_list_begin                     = lrhi_metal3_command_list_begin,
+    .command_list_end                       = lrhi_metal3_command_list_end,
+    .command_list_reset                     = lrhi_metal3_command_list_reset,
+    .copy_pass_begin                        = lrhi_metal3_command_list_begin_copy_pass,
+    .render_pass_begin                      = lrhi_metal3_render_pass_begin,
+    .compute_pass_begin                     = lrhi_metal3_compute_pass_begin,
+    .command_list_prepare_indirect_commands = lrhi_metal3_command_list_prepare_indirect_commands,
 };
 
 static const LRHICopyPassVTable lrhi_metal3_copy_pass_vtable = {
@@ -566,6 +613,142 @@ void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
     }
     lrhi_metal3_bindless_manager_init(&device->bindless_manager, device, out_error);
 
+    // Draw ICB
+    {
+        MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
+
+        // Need to do a copy of the static string because otherwise: Incompatible pointer types sending 'NSString *__strong' to parameter of type 'const char * _Nonnull'clang(-Wincompatible-pointer-types)
+        char* draw_src = strdup((const char*)draw_icb_conversion_shader);
+        NSString* draw_icb_conversion_shader = [NSString stringWithUTF8String:draw_src];
+        NSError* metal_error = nil;
+        id<MTLLibrary> lib = [device->device newLibraryWithSource:draw_icb_conversion_shader options:options error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to compile draw ICB conversion shader: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        id<MTLFunction> draw_func = [lib newFunctionWithName:@"encode_draws"];
+        device->draw_icb_pipe = [device->device newComputePipelineStateWithFunction:draw_func error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to create draw ICB conversion pipeline: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        free(draw_src);
+    }
+
+    // Draw indexed ICB
+    {
+        MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
+
+        // Need to do a copy of the static string because otherwise: Incompatible pointer types sending 'NSString *__strong' to parameter of type 'const char * _Nonnull'clang(-Wincompatible-pointer-types)
+        char* draw_indexed_src = strdup((const char*)draw_indexed_icb_conversion_shader);
+        NSString* draw_indexed_icb_conversion_shader = [NSString stringWithUTF8String:draw_indexed_src];
+        NSError* metal_error = nil;
+        id<MTLLibrary> lib = [device->device newLibraryWithSource:draw_indexed_icb_conversion_shader options:options error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to compile draw indexed ICB conversion shader: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        id<MTLFunction> draw_indexed_func = [lib newFunctionWithName:@"encode_draws"];
+        device->draw_indexed_icb_pipe = [device->device newComputePipelineStateWithFunction:draw_indexed_func error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to create draw indexed ICB conversion pipeline: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        free(draw_indexed_src);
+    }
+
+    // Dispatch
+    {
+        MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
+
+        // Need to do a copy of the static string because otherwise: Incompatible pointer types sending 'NSString *__strong' to parameter of type 'const char * _Nonnull'clang(-Wincompatible-pointer-types)
+        char* dispatch_src = strdup((const char*)dispatch_icb_conversion_shader);
+        NSString* dispatch_icb_conversion_shader = [NSString stringWithUTF8String:dispatch_src];
+        NSError* metal_error = nil;
+        id<MTLLibrary> lib = [device->device newLibraryWithSource:dispatch_icb_conversion_shader options:options error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to compile dispatch ICB conversion shader: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        id<MTLFunction> dispatch_func = [lib newFunctionWithName:@"encode_draws"];
+        device->dispatch_icb_pipe = [device->device newComputePipelineStateWithFunction:dispatch_func error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to create dispatch ICB conversion pipeline: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        free(dispatch_src);
+    }
+
+    // Draw mesh tasks
+    {
+        MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
+
+        // Need to do a copy of the static string because otherwise: Incompatible pointer types sending 'NSString *__strong' to parameter of type 'const char * _Nonnull'clang(-Wincompatible-pointer-types)
+        char* draw_mesh_tasks_src = strdup((const char*)draw_mesh_icb_conversion_shader);
+        NSString* draw_mesh_tasks_icb_conversion_shader = [NSString stringWithUTF8String:draw_mesh_tasks_src];
+        NSError* metal_error = nil;
+        id<MTLLibrary> lib = [device->device newLibraryWithSource:draw_mesh_tasks_icb_conversion_shader options:options error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to compile draw mesh tasks ICB conversion shader: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        id<MTLFunction> draw_mesh_tasks_func = [lib newFunctionWithName:@"encode_draws"];
+        device->draw_mesh_tasks_icb_pipe = [device->device newComputePipelineStateWithFunction:draw_mesh_tasks_func error:&metal_error];
+        if (metal_error) {
+            free(device);
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Failed to create draw mesh tasks ICB conversion pipeline: %s", metal_error.localizedDescription.UTF8String);
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            *out_device = NULL;
+            return;
+        }
+
+        free(draw_mesh_tasks_src);
+    }
+
     *out_device = (LRHIDevice)device;
 }
 
@@ -745,6 +928,13 @@ static void lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHI
     metal_buffer->icb_command_type = command_type;
 
     // Create ICB
+    // Any command type that isn't dispatch, since we need to fill in push constants for every draw
+    // to provide DrawID, we don't inherit buffers for these types of commands
+    // that way we can fill in the per draw ID + push constants when converting from D3D12/Vulkan style
+    // indirect buffer to ICB.
+
+    uint32_t command_count = (uint32_t)(metal_buffer->info.size / metal_buffer->info.stride);
+
     MTLIndirectCommandBufferDescriptor* icb_descriptor = [[MTLIndirectCommandBufferDescriptor alloc] init];
     icb_descriptor.inheritTriangleFillMode = YES;
     icb_descriptor.inheritDepthBias = YES;
@@ -756,15 +946,30 @@ static void lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHI
     switch (command_type) {
         case LUMINARY_RHI_COMMAND_TYPE_DRAW:
             icb_descriptor.commandTypes = MTLIndirectCommandTypeDraw;
+            icb_descriptor.inheritBuffers = NO;
+            metal_buffer->draw_id_atomic = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->icb_params = [metal_buffer->buffer.device newBufferWithLength:sizeof(Metal3ICBDrawParameters) options:MTLResourceStorageModeShared];
+            metal_buffer->per_draw_constants = [metal_buffer->buffer.device newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
+            metal_buffer->primitive_type_buf = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
             break;
         case LUMINARY_RHI_COMMAND_TYPE_DRAW_INDEXED:
             icb_descriptor.commandTypes = MTLIndirectCommandTypeDrawIndexed;
+            icb_descriptor.inheritBuffers = NO;
+            metal_buffer->draw_id_atomic = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->icb_params = [metal_buffer->buffer.device newBufferWithLength:sizeof(Metal3ICBDrawIndexedParameters) options:MTLResourceStorageModeShared];
+            metal_buffer->per_draw_constants = [metal_buffer->buffer.device newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
+            metal_buffer->primitive_type_buf = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
             break;
         case LUMINARY_RHI_COMMAND_TYPE_DISPATCH:
             icb_descriptor.commandTypes = MTLIndirectCommandTypeConcurrentDispatchThreads;
+            metal_buffer->icb_params = [metal_buffer->buffer.device newBufferWithLength:sizeof(Metal3ICBDispatchParameters) options:MTLResourceStorageModeShared];
             break;
         case LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS:
             icb_descriptor.commandTypes = MTLIndirectCommandTypeDrawMeshThreadgroups;
+            icb_descriptor.inheritBuffers = NO;
+            metal_buffer->draw_id_atomic = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->icb_params = [metal_buffer->buffer.device newBufferWithLength:sizeof(Metal3ICBDrawMeshTasksParameters) options:MTLResourceStorageModeShared];
+            metal_buffer->per_draw_constants = [metal_buffer->buffer.device newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
             break;
         default:
             if (out_error) {
@@ -774,7 +979,6 @@ static void lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHI
             return;
     }
 
-    uint32_t command_count = (uint32_t)(metal_buffer->info.size / metal_buffer->info.stride);
     metal_buffer->icb = [metal_buffer->buffer.device newIndirectCommandBufferWithDescriptor:icb_descriptor maxCommandCount:command_count options:MTLResourceStorageModeShared];
 }
 
@@ -797,6 +1001,7 @@ static void lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue
     out->base.vtable = &lrhi_metal3_command_queue_vtable;
     out->queue = queue;
     out->device = metal_device->device;
+    out->device_ref = metal_device;
     *out_queue = (LRHICommandQueue)out;
 
 #ifdef LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
@@ -1006,6 +1211,7 @@ static void lrhi_metal3_create_command_list(LRHICommandQueue queue, LRHICommandL
     out->command_buffer = cmd_buffer;
     out->push_constant_buffer = [metal_queue->device newBufferWithLength:1024 * 1024 options:MTLResourceStorageModeShared];
     out->push_constant_offset = 0;
+    out->device = metal_queue->device_ref;
     *out_command_list = (LRHICommandList)out;
 }
 
@@ -1042,6 +1248,119 @@ static void lrhi_metal3_command_list_reset(LRHICommandList command_list, LRHIErr
     }
     metal_cmd_list->command_buffer = new_cmd_buffer;
     metal_cmd_list->push_constant_offset = 0;
+}
+
+static void lrhi_metal3_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t maxCommandCount, LRHIDrawIndirectParameters* parameters, LRHIRenderPipeline pipeline, const void* push_constants, uint32_t push_constant_size, LRHIError* out_error)
+{
+    // Depending on command type, dispatch a different shader to prepare for command list. Either way, always start with a full reset of the ICB:
+    LRHIBufferMetal3* metal_buffer = (LRHIBufferMetal3*)indirect_command_buffer;
+    LRHIBufferMetal3* metal_count_buffer = (LRHIBufferMetal3*)count_buffer;
+    LRHICommandListMetal3* metal_cmd_list = (LRHICommandListMetal3*)command_list;
+    LRHIDeviceMetal3* device = (LRHIDeviceMetal3*)metal_cmd_list->device;
+
+    // Write push constants into slot 0 of per_draw_constants so the ICB shader can propagate them
+    if (metal_buffer->per_draw_constants && push_constants) {
+        LRHIMetal3ArgumentBufferData* slot0 = (LRHIMetal3ArgumentBufferData*)metal_buffer->per_draw_constants.contents;
+        uint32_t copy_size = push_constant_size < 128 ? push_constant_size : 128;
+        memcpy(slot0->push_constants, push_constants, copy_size);
+        slot0->draw_id = 0;
+    }
+
+    // Write primitive type for render pipelines
+    if (metal_buffer->primitive_type_buf && pipeline) {
+        LRHIRenderPipelineMetal3* metal_pipe = (LRHIRenderPipelineMetal3*)pipeline;
+        LRHIPipelineTopology topo = metal_pipe->info.topology;
+        uint32_t prim = (topo == LUMINARY_RHI_PIPELINE_TOPOLOGY_POINT_LIST) ? 0 :
+                        (topo == LUMINARY_RHI_PIPELINE_TOPOLOGY_LINE_LIST)  ? 1 : 2;
+        *(uint32_t*)metal_buffer->primitive_type_buf.contents = prim;
+    }
+
+    id<MTLBlitCommandEncoder> blit_encoder = [metal_cmd_list->command_buffer blitCommandEncoder];
+    [blit_encoder resetCommandsInBuffer:metal_buffer->icb withRange:NSMakeRange(0, metal_buffer->icb.size)];
+    [blit_encoder fillBuffer:metal_buffer->draw_id_atomic range:NSMakeRange(0, sizeof(uint32_t)) value:0];
+    [blit_encoder endEncoding];
+
+    id<MTLComputeCommandEncoder> compute_encoder = [metal_cmd_list->command_buffer computeCommandEncoder];
+    [compute_encoder barrierAfterQueueStages:MTLStageBlit beforeStages:MTLStageDispatch];
+    switch (metal_buffer->icb_command_type) {
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW: {
+            Metal3ICBDrawParameters* params = (Metal3ICBDrawParameters*)metal_buffer->icb_params.contents;
+            params->icb = metal_buffer->icb.gpuResourceID;
+
+            [compute_encoder setComputePipelineState:device->draw_icb_pipe];
+            [compute_encoder setBuffer:metal_buffer->buffer offset:0 atIndex:0];
+            [compute_encoder setBuffer:metal_count_buffer->buffer offset:0 atIndex:1];
+            [compute_encoder setBuffer:metal_buffer->primitive_type_buf offset:0 atIndex:2];
+            [compute_encoder setBuffer:metal_buffer->icb_params offset:0 atIndex:3];
+            [compute_encoder setBuffer:metal_buffer->per_draw_constants offset:0 atIndex:4];
+            [compute_encoder setBuffer:device->bindless_manager.resource_heap_buffer offset:0 atIndex:5];
+            [compute_encoder setBuffer:device->bindless_manager.sampler_heap_buffer offset:0 atIndex:6];
+            [compute_encoder setBuffer:metal_buffer->draw_id_atomic offset:0 atIndex:7];
+
+            uint32_t threadgroup_size = 64;
+            [compute_encoder dispatchThreads:MTLSizeMake((maxCommandCount + threadgroup_size) / threadgroup_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
+
+            break;
+        }
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW_INDEXED: {
+            Metal3ICBDrawIndexedParameters* params = (Metal3ICBDrawIndexedParameters*)metal_buffer->icb_params.contents;
+            params->icb = metal_buffer->icb.gpuResourceID;
+            params->index_buffer = ((LRHIBufferMetal3*)parameters->index_buffer)->buffer.gpuAddress;
+
+            [compute_encoder setComputePipelineState:device->draw_indexed_icb_pipe];
+            [compute_encoder setBuffer:metal_buffer->buffer offset:0 atIndex:0];
+            [compute_encoder setBuffer:metal_count_buffer->buffer offset:0 atIndex:1];
+            [compute_encoder setBuffer:metal_buffer->primitive_type_buf offset:0 atIndex:2];
+            [compute_encoder setBuffer:metal_buffer->icb_params offset:0 atIndex:3];
+            [compute_encoder setBuffer:metal_buffer->per_draw_constants offset:0 atIndex:4];
+            [compute_encoder setBuffer:device->bindless_manager.resource_heap_buffer offset:0 atIndex:5];
+            [compute_encoder setBuffer:device->bindless_manager.sampler_heap_buffer offset:0 atIndex:6];
+            [compute_encoder setBuffer:metal_buffer->draw_id_atomic offset:0 atIndex:7];
+
+            uint32_t threadgroup_size = 64;
+            [compute_encoder dispatchThreads:MTLSizeMake((maxCommandCount + threadgroup_size) / threadgroup_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
+
+            break;
+        }
+        case LUMINARY_RHI_COMMAND_TYPE_DISPATCH: {
+            Metal3ICBDispatchParameters* params = (Metal3ICBDispatchParameters*)metal_buffer->icb_params.contents;
+            params->icb = metal_buffer->icb.gpuResourceID;
+            params->threads_per_group_x = parameters->threads_per_group_x;
+            params->threads_per_group_y = parameters->threads_per_group_y;
+            params->threads_per_group_z = parameters->threads_per_group_z;
+
+            [compute_encoder setComputePipelineState:device->dispatch_icb_pipe];
+            [compute_encoder setBuffer:metal_buffer->buffer offset:0 atIndex:0];
+            [compute_encoder setBuffer:metal_buffer->icb_params offset:0 atIndex:1];
+            [compute_encoder dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+            break;
+        }
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS: {
+            Metal3ICBDrawMeshTasksParameters* params = (Metal3ICBDrawMeshTasksParameters*)metal_buffer->icb_params.contents;
+            params->icb = metal_buffer->icb.gpuResourceID;
+            params->threads_per_object_group_x = parameters->threads_per_mesh_groups_x;
+            params->threads_per_object_group_y = parameters->threads_per_mesh_groups_y;
+            params->threads_per_object_group_z = parameters->threads_per_mesh_groups_z;
+            params->threads_per_mesh_group_x = parameters->threads_per_mesh_groups_x;
+            params->threads_per_mesh_group_y = parameters->threads_per_mesh_groups_y;
+            params->threads_per_mesh_group_z = parameters->threads_per_mesh_groups_z;
+
+            [compute_encoder setComputePipelineState:device->draw_mesh_tasks_icb_pipe];
+            [compute_encoder setBuffer:metal_buffer->buffer offset:0 atIndex:0];
+            [compute_encoder setBuffer:metal_count_buffer->buffer offset:0 atIndex:1];
+            [compute_encoder setBuffer:metal_buffer->icb_params offset:0 atIndex:2];
+            [compute_encoder setBuffer:metal_buffer->per_draw_constants offset:0 atIndex:3];
+            [compute_encoder setBuffer:device->bindless_manager.resource_heap_buffer offset:0 atIndex:4];
+            [compute_encoder setBuffer:device->bindless_manager.sampler_heap_buffer offset:0 atIndex:5];
+            [compute_encoder setBuffer:metal_buffer->draw_id_atomic offset:0 atIndex:6];
+
+            uint32_t threadgroup_size = 64;
+            [compute_encoder dispatchThreads:MTLSizeMake((maxCommandCount + threadgroup_size) / threadgroup_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
+
+            break;
+        }
+    }
+    [compute_encoder endEncoding];
 }
 
 static LRHICopyPass lrhi_metal3_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error)
