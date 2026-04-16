@@ -66,6 +66,7 @@ typedef struct Metal3BindlessManager {
 typedef struct LRHIMetal3ArgumentBufferData {
     char push_constants[128];
     uint32_t draw_id;
+    uint32_t _padding[31];
 } LRHIMetal3ArgumentBufferData;
 
 typedef struct LRHIMetal3LinearAllocator {
@@ -958,6 +959,8 @@ static void lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHI
         case LUMINARY_RHI_COMMAND_TYPE_DRAW:
             icb_descriptor.commandTypes = MTLIndirectCommandTypeDraw;
             icb_descriptor.inheritBuffers = NO;
+            icb_descriptor.maxVertexBufferBindCount = 3;
+            icb_descriptor.maxFragmentBufferBindCount = 3;
             metal_buffer->draw_id_atomic = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
             metal_buffer->icb_params = [metal_buffer->buffer.device newBufferWithLength:sizeof(Metal3ICBDrawParameters) options:MTLResourceStorageModeShared];
             metal_buffer->per_draw_constants = [metal_buffer->buffer.device newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
@@ -966,6 +969,8 @@ static void lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHI
         case LUMINARY_RHI_COMMAND_TYPE_DRAW_INDEXED:
             icb_descriptor.commandTypes = MTLIndirectCommandTypeDrawIndexed;
             icb_descriptor.inheritBuffers = NO;
+            icb_descriptor.maxVertexBufferBindCount = 3;
+            icb_descriptor.maxFragmentBufferBindCount = 3;
             metal_buffer->draw_id_atomic = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
             metal_buffer->icb_params = [metal_buffer->buffer.device newBufferWithLength:sizeof(Metal3ICBDrawIndexedParameters) options:MTLResourceStorageModeShared];
             metal_buffer->per_draw_constants = [metal_buffer->buffer.device newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
@@ -978,6 +983,9 @@ static void lrhi_metal3_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHI
         case LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS:
             icb_descriptor.commandTypes = MTLIndirectCommandTypeDrawMeshThreadgroups;
             icb_descriptor.inheritBuffers = NO;
+            icb_descriptor.maxFragmentBufferBindCount = 3;
+            icb_descriptor.maxObjectBufferBindCount = 3;
+            icb_descriptor.maxMeshBufferBindCount = 3;
             metal_buffer->draw_id_atomic = [metal_buffer->buffer.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
             metal_buffer->icb_params = [metal_buffer->buffer.device newBufferWithLength:sizeof(Metal3ICBDrawMeshTasksParameters) options:MTLResourceStorageModeShared];
             metal_buffer->per_draw_constants = [metal_buffer->buffer.device newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
@@ -1311,7 +1319,7 @@ static void lrhi_metal3_command_list_prepare_indirect_commands(LRHICommandList c
             [compute_encoder setBuffer:metal_buffer->draw_id_atomic offset:0 atIndex:7];
 
             uint32_t threadgroup_size = 64;
-            [compute_encoder dispatchThreads:MTLSizeMake((maxCommandCount + threadgroup_size) / threadgroup_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
+            [compute_encoder dispatchThreads:MTLSizeMake(maxCommandCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
 
             break;
         }
@@ -1331,7 +1339,7 @@ static void lrhi_metal3_command_list_prepare_indirect_commands(LRHICommandList c
             [compute_encoder setBuffer:metal_buffer->draw_id_atomic offset:0 atIndex:7];
 
             uint32_t threadgroup_size = 64;
-            [compute_encoder dispatchThreads:MTLSizeMake((maxCommandCount + threadgroup_size) / threadgroup_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
+            [compute_encoder dispatchThreads:MTLSizeMake(maxCommandCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
 
             break;
         }
@@ -1351,9 +1359,9 @@ static void lrhi_metal3_command_list_prepare_indirect_commands(LRHICommandList c
         case LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS: {
             Metal3ICBDrawMeshTasksParameters* params = (Metal3ICBDrawMeshTasksParameters*)metal_buffer->icb_params.contents;
             params->icb = metal_buffer->icb.gpuResourceID;
-            params->threads_per_object_group_x = parameters->threads_per_mesh_groups_x;
-            params->threads_per_object_group_y = parameters->threads_per_mesh_groups_y;
-            params->threads_per_object_group_z = parameters->threads_per_mesh_groups_z;
+            params->threads_per_object_group_x = parameters->threads_per_object_groups_x;
+            params->threads_per_object_group_y = parameters->threads_per_object_groups_y;
+            params->threads_per_object_group_z = parameters->threads_per_object_groups_z;
             params->threads_per_mesh_group_x = parameters->threads_per_mesh_groups_x;
             params->threads_per_mesh_group_y = parameters->threads_per_mesh_groups_y;
             params->threads_per_mesh_group_z = parameters->threads_per_mesh_groups_z;
@@ -1368,7 +1376,7 @@ static void lrhi_metal3_command_list_prepare_indirect_commands(LRHICommandList c
             [compute_encoder setBuffer:metal_buffer->draw_id_atomic offset:0 atIndex:6];
 
             uint32_t threadgroup_size = 64;
-            [compute_encoder dispatchThreads:MTLSizeMake((maxCommandCount + threadgroup_size) / threadgroup_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
+            [compute_encoder dispatchThreads:MTLSizeMake(maxCommandCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroup_size, 1, 1)];
 
             break;
         }
@@ -1502,6 +1510,15 @@ static void lrhi_metal3_residency_set_add_buffer(LRHIResidencySet residency_set,
     [metal_residency_set->residency_set addAllocation:metal_buffer->buffer];
     if (metal_buffer->icb) {
         [metal_residency_set->residency_set addAllocation:metal_buffer->icb];
+    }
+    if (metal_buffer->per_draw_constants) {
+        [metal_residency_set->residency_set addAllocation:metal_buffer->per_draw_constants];
+    }
+    if (metal_buffer->primitive_type_buf) {
+        [metal_residency_set->residency_set addAllocation:metal_buffer->primitive_type_buf];
+    }
+    if (metal_buffer->draw_id_atomic) {
+        [metal_residency_set->residency_set addAllocation:metal_buffer->draw_id_atomic];
     }
 }
 
@@ -1687,7 +1704,7 @@ static void lrhi_metal3_render_pass_intra_barrier(LRHIRenderPass render_pass, LR
 static void lrhi_metal3_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
 {
     LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
-    [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal3_render_stage_to_mtl(beforeStage) beforeStages:lrhi_metal3_render_stage_to_mtl(afterStage)];
+    [metal_render_pass->render_encoder barrierAfterQueueStages:lrhi_metal3_render_stage_to_mtl(afterStage) beforeStages:lrhi_metal3_render_stage_to_mtl(beforeStage)];
 }
 
 static void lrhi_metal3_render_pass_set_push_constants(LRHIRenderPass render_pass, const void* data, uint32_t size, LRHIError* out_error)
@@ -2180,7 +2197,10 @@ static void lrhi_metal3_compute_pass_dispatch_indirect(LRHIComputePass compute_p
 {
     LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
     LRHIBufferMetal3* metal_buffer = (LRHIBufferMetal3*)indirect_command_buffer;
-    (void)out_error;
+
+    lrhi_metal3_flush_push_constants_compute(metal_compute_pass, out_error);
+    if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
+
     [metal_compute_pass->compute_encoder executeCommandsInBuffer:metal_buffer->icb withRange:NSMakeRange(0, 1)];
 }
 
