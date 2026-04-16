@@ -16,6 +16,8 @@
 #include "ext/metal_irconverter_runtime.h"
 #include "ext/icb_shaders.h"
 
+#define LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
+
 // ICB parameter argument structs
 typedef struct Metal3ICBDrawParameters {
     MTLResourceID icb;
@@ -35,16 +37,20 @@ typedef struct Metal3ICBDispatchParameters {
 } Metal3ICBDispatchParameters;
 
 typedef struct Metal3ICBDrawMeshTasksParameters {
-    MTLResourceID icb;
+    MTLResourceID icb;              // offset  0, 8 bytes
+    uint32_t _pad0[2];              // offset  8, 8 bytes — align uint3 to 16
 
-    uint32_t threads_per_object_group_x;
-    uint32_t threads_per_object_group_y;
-    uint32_t threads_per_object_group_z;
+    // MSL uint3 in device address space has size+align = 16 (same as uint4)
+    uint32_t threads_per_object_group_x;  // offset 16
+    uint32_t threads_per_object_group_y;  // offset 20
+    uint32_t threads_per_object_group_z;  // offset 24
+    uint32_t _pad1;                       // offset 28 — pad uint3 to 16 bytes
 
-    uint32_t threads_per_mesh_group_x;
-    uint32_t threads_per_mesh_group_y;
-    uint32_t threads_per_mesh_group_z;
-} Metal3ICBDrawMeshTasksParameters;
+    uint32_t threads_per_mesh_group_x;    // offset 32
+    uint32_t threads_per_mesh_group_y;    // offset 36
+    uint32_t threads_per_mesh_group_z;    // offset 40
+    uint32_t _pad2;                       // offset 44 — pad uint3 to 16 bytes
+} Metal3ICBDrawMeshTasksParameters;       // sizeof = 48
 
 typedef struct Metal3BindlessManager {
     id<MTLBuffer> resource_heap_buffer;
@@ -331,6 +337,7 @@ static void            lrhi_metal3_flush_push_constants(LRHIRenderPassMetal3* re
 static void            lrhi_metal3_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
 static void            lrhi_metal3_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error);
 static void            lrhi_metal3_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error);
+static void            lrhi_metal3_render_pass_execute_indirect_commands(LRHIRenderPass render_pass, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t max_command_count, LRHIError* out_error);
 
 static void            lrhi_metal3_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
 static void            lrhi_metal3_destroy_shader_module(LRHIShaderModule shader_module);
@@ -358,6 +365,7 @@ static void            lrhi_metal3_compute_pass_encoder_barrier(LRHIComputePass 
 static void            lrhi_metal3_compute_pass_set_pipeline(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error);
 static void            lrhi_metal3_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error);
 static void            lrhi_metal3_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error);
+static void            lrhi_metal3_compute_pass_dispatch_indirect(LRHIComputePass compute_pass, LRHIBuffer indirect_command_buffer, LRHIError* out_error);
 
 static void            lrhi_metal3_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error);
 static void            lrhi_metal3_destroy_buffer_view(LRHIBufferView buffer_view);
@@ -416,11 +424,12 @@ static const LRHITextureVTable lrhi_metal3_texture_vtable = {
 };
 
 static const LRHIBufferVTable lrhi_metal3_buffer_vtable = {
-    .destroy_buffer  = lrhi_metal3_destroy_buffer,
-    .get_buffer_info = lrhi_metal3_get_buffer_info,
-    .buffer_map      = lrhi_metal3_buffer_map,
-    .buffer_unmap    = lrhi_metal3_buffer_unmap,
-    .buffer_set_name = lrhi_metal3_buffer_set_name,
+    .destroy_buffer                   = lrhi_metal3_destroy_buffer,
+    .get_buffer_info                  = lrhi_metal3_get_buffer_info,
+    .buffer_map                       = lrhi_metal3_buffer_map,
+    .buffer_unmap                     = lrhi_metal3_buffer_unmap,
+    .buffer_set_name                  = lrhi_metal3_buffer_set_name,
+    .buffer_set_indirect_command_type = lrhi_metal3_buffer_set_indirect_command_type,
 };
 
 static const LRHICommandListVTable lrhi_metal3_command_list_vtable = {
@@ -486,6 +495,7 @@ static const LRHIRenderPassVTable lrhi_metal3_render_pass_vtable = {
     .draw = lrhi_metal3_render_pass_draw,
     .draw_indexed = lrhi_metal3_render_pass_draw_indexed,
     .draw_mesh_tasks = lrhi_metal3_render_pass_draw_mesh_tasks,
+    .execute_indirect_commands = lrhi_metal3_render_pass_execute_indirect_commands,
 };
 
 static const LRHIShaderModuleVTable lrhi_metal3_shader_module_vtable = {
@@ -518,6 +528,7 @@ static const LRHIComputePassVTable lrhi_metal3_compute_pass_vtable = {
     .set_pipeline = lrhi_metal3_compute_pass_set_pipeline,
     .set_push_constants = lrhi_metal3_compute_pass_set_push_constants,
     .dispatch = lrhi_metal3_compute_pass_dispatch,
+    .dispatch_indirect = lrhi_metal3_compute_pass_dispatch_indirect,
 };
 
 static const LRHIBufferViewVTable lrhi_metal3_buffer_view_vtable = {
@@ -1277,7 +1288,9 @@ static void lrhi_metal3_command_list_prepare_indirect_commands(LRHICommandList c
 
     id<MTLBlitCommandEncoder> blit_encoder = [metal_cmd_list->command_buffer blitCommandEncoder];
     [blit_encoder resetCommandsInBuffer:metal_buffer->icb withRange:NSMakeRange(0, metal_buffer->icb.size)];
-    [blit_encoder fillBuffer:metal_buffer->draw_id_atomic range:NSMakeRange(0, sizeof(uint32_t)) value:0];
+    if (metal_buffer->draw_id_atomic) {
+        [blit_encoder fillBuffer:metal_buffer->draw_id_atomic range:NSMakeRange(0, metal_buffer->draw_id_atomic.length) value:0];
+    }
     [blit_encoder endEncoding];
 
     id<MTLComputeCommandEncoder> compute_encoder = [metal_cmd_list->command_buffer computeCommandEncoder];
@@ -1837,6 +1850,14 @@ static void lrhi_metal3_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, 
     [metal_render_pass->render_encoder drawMeshThreadgroups:MTLSizeMake(num_groups_x, num_groups_y, num_groups_z) threadsPerObjectThreadgroup:MTLSizeMake(threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z) threadsPerMeshThreadgroup:MTLSizeMake(threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z)];
 }
 
+static void lrhi_metal3_render_pass_execute_indirect_commands(LRHIRenderPass render_pass, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t max_command_count, LRHIError* out_error)
+{
+    LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
+    LRHIBufferMetal3* metal_icb = (LRHIBufferMetal3*)indirect_command_buffer;
+    (void)count_buffer;
+    [metal_render_pass->render_encoder executeCommandsInBuffer:metal_icb->icb withRange:NSMakeRange(0, max_command_count)];
+}
+
 // Shader module
 
 static void lrhi_metal3_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error)
@@ -2153,6 +2174,14 @@ static void lrhi_metal3_compute_pass_dispatch(LRHIComputePass compute_pass, uint
     if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
 
     [metal_compute_pass->compute_encoder dispatchThreadgroups:MTLSizeMake(num_groups_x, num_groups_y, num_groups_z) threadsPerThreadgroup:MTLSizeMake(threads_per_group_x, threads_per_group_y, threads_per_group_z)];
+}
+
+static void lrhi_metal3_compute_pass_dispatch_indirect(LRHIComputePass compute_pass, LRHIBuffer indirect_command_buffer, LRHIError* out_error)
+{
+    LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
+    LRHIBufferMetal3* metal_buffer = (LRHIBufferMetal3*)indirect_command_buffer;
+    (void)out_error;
+    [metal_compute_pass->compute_encoder executeCommandsInBuffer:metal_buffer->icb withRange:NSMakeRange(0, 1)];
 }
 
 // Buffer view

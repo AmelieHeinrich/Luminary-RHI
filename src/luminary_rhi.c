@@ -418,6 +418,11 @@ void lrhi_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_g
     ((LRHIRenderPassBase*)render_pass)->vtable->draw_mesh_tasks(render_pass, num_groups_x, num_groups_y, num_groups_z, threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z, threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z, out_error);
 }
 
+void lrhi_render_pass_execute_indirect_commands(LRHIRenderPass render_pass, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t max_command_count, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->execute_indirect_commands(render_pass, indirect_command_buffer, count_buffer, max_command_count, out_error);
+}
+
 void lrhi_create_compute_pipeline(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error)
 {
     ((LRHIDeviceBase*)device)->vtable->create_compute_pipeline(device, info, out_pipeline, out_error);
@@ -471,6 +476,11 @@ void lrhi_compute_pass_set_push_constants(LRHIComputePass compute_pass, const vo
 void lrhi_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error)
 {
     ((LRHIComputePassBase*)compute_pass)->vtable->dispatch(compute_pass, num_groups_x, num_groups_y, num_groups_z, threads_per_group_x, threads_per_group_y, threads_per_group_z, out_error);
+}
+
+void lrhi_compute_pass_dispatch_indirect(LRHIComputePass compute_pass, LRHIBuffer indirect_command_buffer, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->dispatch_indirect(compute_pass, indirect_command_buffer, out_error);
 }
 
 void lrhi_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error)

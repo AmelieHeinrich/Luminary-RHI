@@ -48,7 +48,7 @@ target("shader_compiler")
 
 target("tests")
     set_kind("binary")
-    add_files("tests/**.cpp")
+    add_files("tests/*.cpp", "tests/test.cpp", "tests/stb/*.cpp", "tests/tests/draw_indirect.cpp")
     add_deps("luminary_rhi", "shader_compiler")
     add_includedirs("extras/shader_compiler")
 
