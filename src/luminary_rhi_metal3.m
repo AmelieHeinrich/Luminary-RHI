@@ -16,8 +16,6 @@
 #include "ext/metal_irconverter_runtime.h"
 #include "ext/icb_shaders.h"
 
-#define LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
-
 // ICB parameter argument structs
 typedef struct Metal3ICBDrawParameters {
     MTLResourceID icb;

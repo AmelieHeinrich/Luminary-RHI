@@ -236,4 +236,36 @@ static const char* draw_mesh_icb_conversion_shader =
 "    );\n"
 "}\n";
 
+static const char* reset_render_icb_commands_shader =
+"#include <metal_stdlib>\n"
+"using namespace metal;\n"
+"\n"
+"struct ResetArgs { command_buffer cmd_buffer; };\n"
+"\n"
+"kernel void reset_commands(\n"
+"    device ResetArgs*   args  [[buffer(0)]],\n"
+"    device const uint*  count [[buffer(1)]],\n"
+"    uint gid [[thread_position_in_grid]])\n"
+"{\n"
+"    if (gid >= *count) return;\n"
+"    render_command rc(args->cmd_buffer, gid);\n"
+"    rc.reset();\n"
+"}\n";
+
+static const char* reset_compute_icb_commands_shader =
+"#include <metal_stdlib>\n"
+"using namespace metal;\n"
+"\n"
+"struct ResetArgs { command_buffer cmd_buffer; };\n"
+"\n"
+"kernel void reset_commands(\n"
+"    device ResetArgs*   args  [[buffer(0)]],\n"
+"    device const uint*  count [[buffer(1)]],\n"
+"    uint gid [[thread_position_in_grid]])\n"
+"{\n"
+"    if (gid >= *count) return;\n"
+"    compute_command cc(args->cmd_buffer, gid);\n"
+"    cc.reset();\n"
+"}\n";
+
 #endif

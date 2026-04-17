@@ -7,6 +7,7 @@
 #include <dispatch/dispatch.h>
 
 #include "ext/metal_irconverter_runtime.h"
+#include "ext/icb_shaders.h"
 
 #define MAX_BINDLESS_RESOURCES 100000
 #define MAX_BINDLESS_SAMPLERS 512
@@ -22,6 +23,35 @@ typedef struct Metal4BindlessManager {
     LRHIFreeList sampler_heap_free_list;
 } Metal4BindlessManager;
 
+typedef struct Metal4ICBDrawParameters {
+    MTLResourceID icb;
+} Metal4ICBDrawParameters;
+
+typedef struct Metal4ICBDrawIndexedParameters {
+    MTLResourceID    icb;
+    MTLGPUAddress    index_buffer;
+} Metal4ICBDrawIndexedParameters;
+
+typedef struct Metal4ICBDispatchParameters {
+    MTLResourceID icb;
+    uint32_t      threads_per_group_x;
+    uint32_t      threads_per_group_y;
+    uint32_t      threads_per_group_z;
+} Metal4ICBDispatchParameters;
+
+typedef struct Metal4ICBDrawMeshTasksParameters {
+    MTLResourceID icb;
+    uint32_t _pad0[2];
+    uint32_t threads_per_object_group_x;
+    uint32_t threads_per_object_group_y;
+    uint32_t threads_per_object_group_z;
+    uint32_t _pad1;
+    uint32_t threads_per_mesh_group_x;
+    uint32_t threads_per_mesh_group_y;
+    uint32_t threads_per_mesh_group_z;
+    uint32_t _pad2;
+} Metal4ICBDrawMeshTasksParameters;
+
 typedef struct LRHIDeviceMetal4 {
     LRHIDeviceBase base;
     id<MTLDevice> device;
@@ -29,6 +59,13 @@ typedef struct LRHIDeviceMetal4 {
 
     Metal4BindlessManager bindless_manager;
     id<MTLTextureViewPool> texture_view_pool;
+
+    id<MTLComputePipelineState> draw_icb_pipe;
+    id<MTLComputePipelineState> draw_indexed_icb_pipe;
+    id<MTLComputePipelineState> dispatch_icb_pipe;
+    id<MTLComputePipelineState> draw_mesh_tasks_icb_pipe;
+    id<MTLComputePipelineState> reset_render_icb_pipe;
+    id<MTLComputePipelineState> reset_compute_icb_pipe;
 } LRHIDeviceMetal4;
 
 typedef struct LRHITextureMetal4 {
@@ -41,6 +78,15 @@ typedef struct LRHIBufferMetal4 {
     LRHIBufferBase base;
     id<MTLBuffer> buffer;
     LRHIBufferInfo info;
+
+    // Indirect command buffer resources (populated by buffer_set_indirect_command_type)
+    id<MTLIndirectCommandBuffer> icb;
+    id<MTLBuffer> icb_params;
+    id<MTLBuffer> draw_id_atomic;
+    id<MTLBuffer> per_draw_constants;
+    id<MTLBuffer> primitive_type_buf;
+    id<MTLBuffer> icb_capacity_buf;
+    LRHICommandType icb_command_type;
 } LRHIBufferMetal4;
 
 typedef struct LRHICommandQueueMetal4 {
@@ -48,6 +94,7 @@ typedef struct LRHICommandQueueMetal4 {
     id<MTL4CommandQueue> queue;
     id<MTLDevice> device;
     id<MTLResidencySet> internal_residency_set;
+    LRHIDeviceMetal4* rhi_device;
 } LRHICommandQueueMetal4;
 
 typedef struct LRHIFenceMetal4 {
@@ -63,6 +110,7 @@ typedef struct LRHICommandListMetal4 {
     id<MTL4ArgumentTable> compute_argument_table;
     id<MTLBuffer> push_constant_buffer;
     uint32_t push_constant_offset;
+    LRHIDeviceMetal4* rhi_device;
 } LRHICommandListMetal4;
 
 typedef struct LRHICopyPassMetal4 {
@@ -208,6 +256,7 @@ static void*           lrhi_metal4_buffer_map(LRHIBuffer buffer, LRHIError* out_
 static void            lrhi_metal4_buffer_unmap(LRHIBuffer buffer);
 static void            lrhi_metal4_buffer_readback(LRHIDevice device, LRHIBuffer buffer, void* out_data, uint32_t data_size, LRHIError* out_error);
 static void            lrhi_metal4_buffer_set_name(LRHIBuffer buffer, const char* name);
+static void            lrhi_metal4_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHICommandType command_type, LRHIError* out_error);
 
 static void            lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue* out_queue, LRHIError* out_error);
 static void            lrhi_metal4_destroy_command_queue(LRHICommandQueue queue);
@@ -228,6 +277,7 @@ static void            lrhi_metal4_command_list_begin(LRHICommandList command_li
 static void            lrhi_metal4_command_list_end(LRHICommandList command_list, LRHIError* out_error);
 static void            lrhi_metal4_command_list_reset(LRHICommandList command_list, LRHIError* out_error);
 static LRHICopyPass    lrhi_metal4_command_list_begin_copy_pass(LRHICommandList command_list, LRHIError* out_error);
+static void            lrhi_metal4_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t maxCommandCount, LRHIDrawIndirectParameters* parameters, LRHIRenderPipeline pipeline, const void* push_constants, uint32_t push_constant_size, LRHIError* out_error);
 
 static void            lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
 static void            lrhi_metal4_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error);
@@ -268,6 +318,7 @@ static void            lrhi_metal4_render_pass_set_mesh_pipeline(LRHIRenderPass 
 static void            lrhi_metal4_render_pass_draw(LRHIRenderPass render_pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_draw_indexed(LRHIRenderPass render_pass, uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t vertex_offset, uint32_t first_instance, LRHIBuffer index_buffer, uint32_t index_stride, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, uint32_t num_groups_x, uint32_t num_groups_y, uint32_t num_groups_z, uint32_t threads_per_object_group_x, uint32_t threads_per_object_group_y, uint32_t threads_per_object_group_z, uint32_t threads_per_mesh_group_x, uint32_t threads_per_mesh_group_y, uint32_t threads_per_mesh_group_z, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_execute_indirect_commands(LRHIRenderPass render_pass, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t max_command_count, LRHIError* out_error);
 
 static void            lrhi_metal4_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error);
 static void            lrhi_metal4_destroy_shader_module(LRHIShaderModule shader_module);
@@ -295,6 +346,7 @@ static void            lrhi_metal4_compute_pass_encoder_barrier(LRHIComputePass 
 static void            lrhi_metal4_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error);
 static void            lrhi_metal4_compute_pass_set_compute_pipeline(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error);
 static void            lrhi_metal4_compute_pass_dispatch(LRHIComputePass compute_pass, uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z, uint32_t threads_per_group_x, uint32_t threads_per_group_y, uint32_t threads_per_group_z, LRHIError* out_error);
+static void            lrhi_metal4_compute_pass_dispatch_indirect(LRHIComputePass compute_pass, LRHIBuffer indirect_command_buffer, LRHIError* out_error);
 
 static void            lrhi_metal4_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error);
 static void            lrhi_metal4_destroy_buffer_view(LRHIBufferView buffer_view);
@@ -353,21 +405,23 @@ static const LRHITextureVTable lrhi_metal4_texture_vtable = {
 };
 
 static const LRHIBufferVTable lrhi_metal4_buffer_vtable = {
-    .destroy_buffer  = lrhi_metal4_destroy_buffer,
-    .get_buffer_info = lrhi_metal4_get_buffer_info,
-    .buffer_map      = lrhi_metal4_buffer_map,
-    .buffer_unmap    = lrhi_metal4_buffer_unmap,
-    .buffer_set_name = lrhi_metal4_buffer_set_name,
+    .destroy_buffer                   = lrhi_metal4_destroy_buffer,
+    .get_buffer_info                  = lrhi_metal4_get_buffer_info,
+    .buffer_map                       = lrhi_metal4_buffer_map,
+    .buffer_unmap                     = lrhi_metal4_buffer_unmap,
+    .buffer_set_name                  = lrhi_metal4_buffer_set_name,
+    .buffer_set_indirect_command_type = lrhi_metal4_buffer_set_indirect_command_type,
 };
 
 static const LRHICommandListVTable lrhi_metal4_command_list_vtable = {
-    .destroy_command_list = lrhi_metal4_destroy_command_list,
-    .command_list_begin   = lrhi_metal4_command_list_begin,
-    .command_list_end     = lrhi_metal4_command_list_end,
-    .command_list_reset   = lrhi_metal4_command_list_reset,
-    .copy_pass_begin      = lrhi_metal4_command_list_begin_copy_pass,
-    .render_pass_begin    = lrhi_metal4_render_pass_begin,
-    .compute_pass_begin   = lrhi_metal4_compute_pass_begin,
+    .destroy_command_list              = lrhi_metal4_destroy_command_list,
+    .command_list_begin                = lrhi_metal4_command_list_begin,
+    .command_list_end                  = lrhi_metal4_command_list_end,
+    .command_list_reset                = lrhi_metal4_command_list_reset,
+    .command_list_prepare_indirect_commands = lrhi_metal4_command_list_prepare_indirect_commands,
+    .copy_pass_begin                   = lrhi_metal4_command_list_begin_copy_pass,
+    .render_pass_begin                 = lrhi_metal4_render_pass_begin,
+    .compute_pass_begin                = lrhi_metal4_compute_pass_begin,
 };
 
 static const LRHICopyPassVTable lrhi_metal4_copy_pass_vtable = {
@@ -422,6 +476,7 @@ static const LRHIRenderPassVTable lrhi_metal4_render_pass_vtable = {
     .draw = lrhi_metal4_render_pass_draw,
     .draw_indexed = lrhi_metal4_render_pass_draw_indexed,
     .draw_mesh_tasks = lrhi_metal4_render_pass_draw_mesh_tasks,
+    .execute_indirect_commands = lrhi_metal4_render_pass_execute_indirect_commands,
 };
 
 static const LRHIShaderModuleVTable lrhi_metal4_shader_module_vtable = {
@@ -454,6 +509,7 @@ static const LRHIComputePassVTable lrhi_metal4_compute_pass_vtable = {
     .set_push_constants = lrhi_metal4_compute_pass_set_push_constants,
     .set_pipeline = lrhi_metal4_compute_pass_set_compute_pipeline,
     .dispatch = lrhi_metal4_compute_pass_dispatch,
+    .dispatch_indirect = lrhi_metal4_compute_pass_dispatch_indirect,
 };
 
 static const LRHIBufferViewVTable lrhi_metal4_buffer_view_vtable = {
@@ -573,6 +629,45 @@ void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
     }
 
     lrhi_metal4_bindless_manager_init(&device->bindless_manager, device, out_error);
+
+    // Compile ICB conversion and reset pipelines
+#define LRHI_METAL4_COMPILE_ICB_PIPE(src_str, fn_name, dst_field) \
+    do { \
+        NSError* _icb_err = nil; \
+        id<MTLLibrary> _lib = [device->device \
+            newLibraryWithSource:[NSString stringWithUTF8String:(src_str)] \
+            options:nil error:&_icb_err]; \
+        if (_icb_err || !_lib) { \
+            if (out_error) { \
+                snprintf(out_error->message, sizeof(out_error->message), \
+                         "Failed to compile ICB shader '" fn_name "': %s", \
+                         _icb_err ? _icb_err.localizedDescription.UTF8String : "unknown"); \
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR; \
+            } \
+            free(device); *out_device = NULL; return; \
+        } \
+        id<MTLFunction> _fn = [_lib newFunctionWithName:@fn_name]; \
+        device->dst_field = [device->device newComputePipelineStateWithFunction:_fn error:&_icb_err]; \
+        if (_icb_err || !device->dst_field) { \
+            if (out_error) { \
+                snprintf(out_error->message, sizeof(out_error->message), \
+                         "Failed to create ICB pipeline '" fn_name "': %s", \
+                         _icb_err ? _icb_err.localizedDescription.UTF8String : "unknown"); \
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR; \
+            } \
+            free(device); *out_device = NULL; return; \
+        } \
+    } while(0)
+
+    LRHI_METAL4_COMPILE_ICB_PIPE(draw_icb_conversion_shader,         "encode_draws",   draw_icb_pipe);
+    LRHI_METAL4_COMPILE_ICB_PIPE(draw_indexed_icb_conversion_shader, "encode_draws",   draw_indexed_icb_pipe);
+    LRHI_METAL4_COMPILE_ICB_PIPE(dispatch_icb_conversion_shader,     "encode_draws",   dispatch_icb_pipe);
+    LRHI_METAL4_COMPILE_ICB_PIPE(draw_mesh_icb_conversion_shader,    "encode_draws",   draw_mesh_tasks_icb_pipe);
+    LRHI_METAL4_COMPILE_ICB_PIPE(reset_render_icb_commands_shader,   "reset_commands", reset_render_icb_pipe);
+    LRHI_METAL4_COMPILE_ICB_PIPE(reset_compute_icb_commands_shader,  "reset_commands", reset_compute_icb_pipe);
+
+#undef LRHI_METAL4_COMPILE_ICB_PIPE
+
     *out_device = (LRHIDevice)device;
 }
 
@@ -706,7 +801,91 @@ static void lrhi_metal4_create_buffer(LRHIDevice device, LRHIBufferInfo* info, L
 
 static void lrhi_metal4_destroy_buffer(LRHIBuffer buffer)
 {
+    LRHIBufferMetal4* metal_buffer = (LRHIBufferMetal4*)buffer;
+    metal_buffer->icb               = nil;
+    metal_buffer->icb_params        = nil;
+    metal_buffer->draw_id_atomic    = nil;
+    metal_buffer->per_draw_constants = nil;
+    metal_buffer->primitive_type_buf = nil;
+    metal_buffer->icb_capacity_buf  = nil;
     free(buffer);
+}
+
+static void lrhi_metal4_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHICommandType command_type, LRHIError* out_error)
+{
+    LRHIBufferMetal4* metal_buffer = (LRHIBufferMetal4*)buffer;
+    metal_buffer->icb_command_type = command_type;
+
+    uint32_t command_count = (uint32_t)(metal_buffer->info.size / metal_buffer->info.stride);
+
+    MTLIndirectCommandBufferDescriptor* desc = [[MTLIndirectCommandBufferDescriptor alloc] init];
+    desc.inheritTriangleFillMode   = YES;
+    desc.inheritDepthBias          = YES;
+    desc.inheritDepthClipMode      = YES;
+    desc.inheritPipelineState      = YES;
+    desc.inheritBuffers            = YES;
+    desc.inheritDepthStencilState  = YES;
+    desc.inheritFrontFacingWinding = YES;
+
+    id<MTLDevice> dev = metal_buffer->buffer.device;
+
+    switch (command_type) {
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW:
+            desc.commandTypes             = MTLIndirectCommandTypeDraw;
+            desc.inheritBuffers           = NO;
+            desc.maxVertexBufferBindCount = 3;
+            desc.maxFragmentBufferBindCount = 3;
+            desc.maxObjectBufferBindCount = 3;
+            desc.maxMeshBufferBindCount = 3;
+            metal_buffer->draw_id_atomic    = [dev newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->per_draw_constants = [dev newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
+            metal_buffer->primitive_type_buf = [dev newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->icb_params        = [dev newBufferWithLength:sizeof(Metal4ICBDrawParameters) options:MTLResourceStorageModeShared];
+            break;
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW_INDEXED:
+            desc.commandTypes             = MTLIndirectCommandTypeDrawIndexed;
+            desc.inheritBuffers           = NO;
+            desc.maxVertexBufferBindCount = 3;
+            desc.maxFragmentBufferBindCount = 3;
+            desc.maxObjectBufferBindCount = 3;
+            desc.maxMeshBufferBindCount = 3;
+            metal_buffer->draw_id_atomic    = [dev newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->per_draw_constants = [dev newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
+            metal_buffer->primitive_type_buf = [dev newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->icb_params        = [dev newBufferWithLength:sizeof(Metal4ICBDrawIndexedParameters) options:MTLResourceStorageModeShared];
+            break;
+        case LUMINARY_RHI_COMMAND_TYPE_DISPATCH:
+            desc.commandTypes  = MTLIndirectCommandTypeConcurrentDispatchThreads;
+            metal_buffer->icb_params = [dev newBufferWithLength:sizeof(Metal4ICBDispatchParameters) options:MTLResourceStorageModeShared];
+            break;
+        case LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS:
+            desc.commandTypes               = MTLIndirectCommandTypeDrawMeshThreadgroups;
+            desc.inheritBuffers             = NO;
+            desc.maxVertexBufferBindCount = 3;
+            desc.maxFragmentBufferBindCount = 3;
+            desc.maxObjectBufferBindCount = 3;
+            desc.maxMeshBufferBindCount = 3;
+            metal_buffer->draw_id_atomic    = [dev newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+            metal_buffer->per_draw_constants = [dev newBufferWithLength:(command_count * 256) options:MTLResourceStorageModeShared];
+            metal_buffer->icb_params        = [dev newBufferWithLength:sizeof(Metal4ICBDrawMeshTasksParameters) options:MTLResourceStorageModeShared];
+            break;
+        default:
+            if (out_error) {
+                snprintf(out_error->message, sizeof(out_error->message), "Invalid indirect command type");
+                out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+            }
+            return;
+    }
+
+    metal_buffer->icb = [dev newIndirectCommandBufferWithDescriptor:desc maxCommandCount:command_count options:MTLResourceStorageModeShared];
+
+    // Write the ICB resource ID into icb_params (it starts with MTLResourceID at offset 0 for all param types)
+    MTLResourceID icb_rid = metal_buffer->icb.gpuResourceID;
+    memcpy(metal_buffer->icb_params.contents, &icb_rid, sizeof(MTLResourceID));
+
+    // Capacity buffer: used by the reset kernel to know how many commands to reset
+    metal_buffer->icb_capacity_buf = [dev newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    *(uint32_t*)metal_buffer->icb_capacity_buf.contents = command_count;
 }
 
 static void lrhi_metal4_get_buffer_info(LRHIBuffer buffer, LRHIBufferInfo* out_info)
@@ -783,6 +962,7 @@ static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue
     out->queue = base_queue;
     out->device = metal_device->device;
     out->internal_residency_set = internal_residency_set;
+    out->rhi_device = metal_device;
     *out_queue = (LRHICommandQueue)out;
 
 #ifdef LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE
@@ -946,6 +1126,7 @@ static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandL
     out->compute_argument_table = [metal_queue->device newArgumentTableWithDescriptor:argument_table_descriptor error:&argument_error];
     out->push_constant_buffer = [metal_queue->device newBufferWithLength:1024 * 1024 options:MTLResourceStorageModeShared];
     out->push_constant_offset = 0;
+    out->rhi_device = metal_queue->rhi_device;
 
     [metal_queue->internal_residency_set addAllocation:out->push_constant_buffer];
     [metal_queue->internal_residency_set commit];
@@ -998,6 +1179,129 @@ static LRHICopyPass lrhi_metal4_command_list_begin_copy_pass(LRHICommandList com
     copy_pass->base.vtable = &lrhi_metal4_copy_pass_vtable;
     copy_pass->blit_encoder = blit_encoder;
     return (LRHICopyPass)copy_pass;
+}
+
+static void lrhi_metal4_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t maxCommandCount, LRHIDrawIndirectParameters* parameters, LRHIRenderPipeline pipeline, const void* push_constants, uint32_t push_constant_size, LRHIError* out_error)
+{
+    LRHICommandListMetal4* metal_cmd_list  = (LRHICommandListMetal4*)command_list;
+    LRHIBufferMetal4*      metal_buffer    = (LRHIBufferMetal4*)indirect_command_buffer;
+    LRHIBufferMetal4*      metal_count_buf = (LRHIBufferMetal4*)count_buffer;
+    LRHIDeviceMetal4*      device          = metal_cmd_list->rhi_device;
+
+    // Write push constants into slot 0 of per_draw_constants
+    if (metal_buffer->per_draw_constants && push_constants && push_constant_size > 0) {
+        LRHIArgumentBufferData* slot0 = (LRHIArgumentBufferData*)metal_buffer->per_draw_constants.contents;
+        uint32_t copy_size = push_constant_size < 128 ? push_constant_size : 128;
+        memcpy(slot0->push_constants, push_constants, copy_size);
+        slot0->draw_id = 0;
+    }
+
+    // Write primitive type for render pipelines
+    if (metal_buffer->primitive_type_buf && pipeline) {
+        LRHIRenderPipelineMetal4* metal_pipe = (LRHIRenderPipelineMetal4*)pipeline;
+        LRHIPipelineTopology topo = metal_pipe->info.topology;
+        uint32_t prim = (topo == LUMINARY_RHI_PIPELINE_TOPOLOGY_POINT_LIST) ? 0 :
+                        (topo == LUMINARY_RHI_PIPELINE_TOPOLOGY_LINE_LIST)  ? 1 : 2;
+        *(uint32_t*)metal_buffer->primitive_type_buf.contents = prim;
+    }
+
+    // Reset draw_id_atomic from CPU (shared storage)
+    if (metal_buffer->draw_id_atomic)
+        *(uint32_t*)metal_buffer->draw_id_atomic.contents = 0;
+
+    // Phase A: Reset the ICB via compute kernel
+    {
+        id<MTLComputePipelineState> reset_pipe =
+            (metal_buffer->icb_command_type == LUMINARY_RHI_COMMAND_TYPE_DISPATCH)
+            ? device->reset_compute_icb_pipe
+            : device->reset_render_icb_pipe;
+
+        id<MTL4ComputeCommandEncoder> reset_enc = [metal_cmd_list->command_buffer computeCommandEncoder];
+        [reset_enc setComputePipelineState:reset_pipe];
+        [metal_cmd_list->compute_argument_table setAddress:metal_buffer->icb_params.gpuAddress        atIndex:0];
+        [metal_cmd_list->compute_argument_table setAddress:metal_buffer->icb_capacity_buf.gpuAddress  atIndex:1];
+        [reset_enc setArgumentTable:metal_cmd_list->compute_argument_table];
+        uint32_t cap = *(uint32_t*)metal_buffer->icb_capacity_buf.contents;
+        [reset_enc dispatchThreads:MTLSizeMake(cap, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        [reset_enc endEncoding];
+    }
+
+    // Phase B: ICB conversion kernel
+    {
+        id<MTL4ComputeCommandEncoder> convert_enc = [metal_cmd_list->command_buffer computeCommandEncoder];
+        [convert_enc barrierAfterQueueStages:MTLStageDispatch beforeStages:MTLStageDispatch
+                           visibilityOptions:MTL4VisibilityOptionDevice];
+
+        switch (metal_buffer->icb_command_type) {
+            case LUMINARY_RHI_COMMAND_TYPE_DRAW: {
+                [convert_enc setComputePipelineState:device->draw_icb_pipe];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->buffer.gpuAddress               atIndex:0];
+                [metal_cmd_list->compute_argument_table setAddress:metal_count_buf->buffer.gpuAddress             atIndex:1];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->primitive_type_buf.gpuAddress   atIndex:2];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->icb_params.gpuAddress           atIndex:3];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->per_draw_constants.gpuAddress   atIndex:4];
+                [metal_cmd_list->compute_argument_table setAddress:device->bindless_manager.resource_heap_buffer.gpuAddress atIndex:5];
+                [metal_cmd_list->compute_argument_table setAddress:device->bindless_manager.sampler_heap_buffer.gpuAddress  atIndex:6];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->draw_id_atomic.gpuAddress       atIndex:7];
+                [convert_enc setArgumentTable:metal_cmd_list->compute_argument_table];
+                [convert_enc dispatchThreads:MTLSizeMake(maxCommandCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+                break;
+            }
+            case LUMINARY_RHI_COMMAND_TYPE_DRAW_INDEXED: {
+                Metal4ICBDrawIndexedParameters* params = (Metal4ICBDrawIndexedParameters*)metal_buffer->icb_params.contents;
+                params->index_buffer = ((LRHIBufferMetal4*)parameters->index_buffer)->buffer.gpuAddress;
+
+                [convert_enc setComputePipelineState:device->draw_indexed_icb_pipe];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->buffer.gpuAddress               atIndex:0];
+                [metal_cmd_list->compute_argument_table setAddress:metal_count_buf->buffer.gpuAddress             atIndex:1];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->primitive_type_buf.gpuAddress   atIndex:2];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->icb_params.gpuAddress           atIndex:3];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->per_draw_constants.gpuAddress   atIndex:4];
+                [metal_cmd_list->compute_argument_table setAddress:device->bindless_manager.resource_heap_buffer.gpuAddress atIndex:5];
+                [metal_cmd_list->compute_argument_table setAddress:device->bindless_manager.sampler_heap_buffer.gpuAddress  atIndex:6];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->draw_id_atomic.gpuAddress       atIndex:7];
+                [convert_enc setArgumentTable:metal_cmd_list->compute_argument_table];
+                [convert_enc dispatchThreads:MTLSizeMake(maxCommandCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+                break;
+            }
+            case LUMINARY_RHI_COMMAND_TYPE_DISPATCH: {
+                Metal4ICBDispatchParameters* params = (Metal4ICBDispatchParameters*)metal_buffer->icb_params.contents;
+                params->threads_per_group_x = parameters->threads_per_group_x;
+                params->threads_per_group_y = parameters->threads_per_group_y;
+                params->threads_per_group_z = parameters->threads_per_group_z;
+
+                [convert_enc setComputePipelineState:device->dispatch_icb_pipe];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->buffer.gpuAddress   atIndex:0];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->icb_params.gpuAddress atIndex:1];
+                [convert_enc setArgumentTable:metal_cmd_list->compute_argument_table];
+                [convert_enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+                break;
+            }
+            case LUMINARY_RHI_COMMAND_TYPE_DRAW_MESH_TASKS: {
+                Metal4ICBDrawMeshTasksParameters* params = (Metal4ICBDrawMeshTasksParameters*)metal_buffer->icb_params.contents;
+                params->threads_per_object_group_x = parameters->threads_per_object_groups_x;
+                params->threads_per_object_group_y = parameters->threads_per_object_groups_y;
+                params->threads_per_object_group_z = parameters->threads_per_object_groups_z;
+                params->threads_per_mesh_group_x   = parameters->threads_per_mesh_groups_x;
+                params->threads_per_mesh_group_y   = parameters->threads_per_mesh_groups_y;
+                params->threads_per_mesh_group_z   = parameters->threads_per_mesh_groups_z;
+
+                [convert_enc setComputePipelineState:device->draw_mesh_tasks_icb_pipe];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->buffer.gpuAddress               atIndex:0];
+                [metal_cmd_list->compute_argument_table setAddress:metal_count_buf->buffer.gpuAddress             atIndex:1];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->icb_params.gpuAddress           atIndex:2];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->per_draw_constants.gpuAddress   atIndex:3];
+                [metal_cmd_list->compute_argument_table setAddress:device->bindless_manager.resource_heap_buffer.gpuAddress atIndex:4];
+                [metal_cmd_list->compute_argument_table setAddress:device->bindless_manager.sampler_heap_buffer.gpuAddress  atIndex:5];
+                [metal_cmd_list->compute_argument_table setAddress:metal_buffer->draw_id_atomic.gpuAddress       atIndex:6];
+                [convert_enc setArgumentTable:metal_cmd_list->compute_argument_table];
+                [convert_enc dispatchThreads:MTLSizeMake(maxCommandCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+                break;
+            }
+        }
+
+        [convert_enc endEncoding];
+    }
 }
 
 // Copy pass
@@ -1113,6 +1417,14 @@ static void lrhi_metal4_residency_set_add_buffer(LRHIResidencySet residency_set,
     LRHIBufferMetal4* metal_buffer = (LRHIBufferMetal4*)buffer;
 
     [metal_residency_set->residency_set addAllocation:metal_buffer->buffer];
+
+    // Also make ICB sub-buffers and the ICB itself resident when the user adds this buffer
+    if (metal_buffer->icb)               [metal_residency_set->residency_set addAllocation:metal_buffer->icb];
+    if (metal_buffer->icb_params)        [metal_residency_set->residency_set addAllocation:metal_buffer->icb_params];
+    if (metal_buffer->icb_capacity_buf)  [metal_residency_set->residency_set addAllocation:metal_buffer->icb_capacity_buf];
+    if (metal_buffer->draw_id_atomic)    [metal_residency_set->residency_set addAllocation:metal_buffer->draw_id_atomic];
+    if (metal_buffer->per_draw_constants)[metal_residency_set->residency_set addAllocation:metal_buffer->per_draw_constants];
+    if (metal_buffer->primitive_type_buf)[metal_residency_set->residency_set addAllocation:metal_buffer->primitive_type_buf];
 }
 
 static void lrhi_metal4_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
@@ -1517,6 +1829,15 @@ static void lrhi_metal4_render_pass_draw_mesh_tasks(LRHIRenderPass render_pass, 
     [metal_render_pass->render_encoder drawMeshThreadgroups:MTLSizeMake(num_groups_x, num_groups_y, num_groups_z) threadsPerObjectThreadgroup:MTLSizeMake(threads_per_object_group_x, threads_per_object_group_y, threads_per_object_group_z) threadsPerMeshThreadgroup:MTLSizeMake(threads_per_mesh_group_x, threads_per_mesh_group_y, threads_per_mesh_group_z)];
 }
 
+static void lrhi_metal4_render_pass_execute_indirect_commands(LRHIRenderPass render_pass, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t max_command_count, LRHIError* out_error)
+{
+    (void)count_buffer;
+    (void)out_error;
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    LRHIBufferMetal4*     metal_icb         = (LRHIBufferMetal4*)indirect_command_buffer;
+    [metal_render_pass->render_encoder executeCommandsInBuffer:metal_icb->icb withRange:NSMakeRange(0, max_command_count)];
+}
+
 // Shader module
 
 static void lrhi_metal4_create_shader_module(LRHIDevice device, LRHIShaderModuleInfo* info, LRHIShaderModule* out_shader_module, LRHIError* out_error)
@@ -1837,6 +2158,17 @@ static void lrhi_metal4_compute_pass_dispatch(LRHIComputePass compute_pass, uint
     if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
 
     [metal_compute_pass->compute_encoder dispatchThreadgroups:MTLSizeMake(group_count_x, group_count_y, group_count_z) threadsPerThreadgroup:MTLSizeMake(threads_per_group_x, threads_per_group_y, threads_per_group_z)];
+}
+
+static void lrhi_metal4_compute_pass_dispatch_indirect(LRHIComputePass compute_pass, LRHIBuffer indirect_command_buffer, LRHIError* out_error)
+{
+    LRHIComputePassMetal4* metal_compute_pass = (LRHIComputePassMetal4*)compute_pass;
+    LRHIBufferMetal4*      metal_buffer       = (LRHIBufferMetal4*)indirect_command_buffer;
+
+    lrhi_metal4_compute_pass_flush_push_constants(metal_compute_pass, out_error);
+    if (out_error && out_error->severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) return;
+
+    [metal_compute_pass->compute_encoder executeCommandsInBuffer:metal_buffer->icb withRange:NSMakeRange(0, 1)];
 }
 
 // Swap chain
