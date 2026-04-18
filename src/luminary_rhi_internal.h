@@ -182,6 +182,7 @@ typedef struct LRHIBLASVTable {
 typedef struct LRHITLASVTable {
     void (*destroy_top_level_acceleration_structure)(LRHITopLevelAccelerationStructure tlas);
     void (*get_top_level_acceleration_structure_info)(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info);
+    uint64_t (*get_bindless_index)(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
     LRHIAccelerationStructureBufferSizes (*get_build_scratch_size)(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
     void (*reset)(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
     void (*add_instance)(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error);

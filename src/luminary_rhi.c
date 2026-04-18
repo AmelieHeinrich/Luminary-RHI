@@ -253,9 +253,29 @@ void lrhi_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITextu
     ((LRHIResidencySetBase*)residency_set)->vtable->remove_texture(residency_set, texture, out_error);
 }
 
+void lrhi_residency_set_add_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->add_blas(residency_set, blas, out_error);
+}
+
+void lrhi_residency_set_add_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->add_tlas(residency_set, tlas, out_error);
+}
+
 void lrhi_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error)
 {
     ((LRHIResidencySetBase*)residency_set)->vtable->remove_buffer(residency_set, buffer, out_error);
+}
+
+void lrhi_residency_set_remove_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->remove_blas(residency_set, blas, out_error);
+}
+
+void lrhi_residency_set_remove_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    ((LRHIResidencySetBase*)residency_set)->vtable->remove_tlas(residency_set, tlas, out_error);
 }
 
 void lrhi_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error)
@@ -543,9 +563,9 @@ LRHIAccelerationStructureBufferSizes lrhi_bottom_level_acceleration_structure_ge
     return ((LRHIBLASBase*)blas)->vtable->get_build_scratch_size(blas, out_error);
 }
 
-void lrhi_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error)
+LRHIAccelerationStructurePass lrhi_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error)
 {
-    ((LRHICommandListBase*)command_list)->vtable->acceleration_structure_pass_begin(command_list, out_error);
+    return ((LRHICommandListBase*)command_list)->vtable->acceleration_structure_pass_begin(command_list, out_error);
 }
 
 void lrhi_acceleration_structure_pass_end(LRHIAccelerationStructurePass pass, LRHIError* out_error)
@@ -566,4 +586,44 @@ void lrhi_acceleration_structure_encoder_barrier(LRHIAccelerationStructurePass p
 void lrhi_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
 {
     ((LRHIAccelerationStructurePassBase*)pass)->vtable->build_blas(pass, blas, scratch_buffer, scratch_offset, out_error);   
+}
+
+void lrhi_acceleration_structure_pass_build_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->build_tlas(pass, tlas, scratch_buffer, scratch_offset, out_error);   
+}
+
+void lrhi_create_top_level_acceleration_structure(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_top_level_acceleration_structure(device, info, out_tlas, out_error);
+}
+
+void lrhi_destroy_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas)
+{
+    ((LRHITLASBase*)tlas)->vtable->destroy_top_level_acceleration_structure(tlas);
+}
+
+void lrhi_get_top_level_acceleration_structure_info(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info)
+{
+    ((LRHITLASBase*)tlas)->vtable->get_top_level_acceleration_structure_info(tlas, out_info);
+}
+
+uint64_t lrhi_top_level_acceleration_structure_get_bindless_index(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    return ((LRHITLASBase*)tlas)->vtable->get_bindless_index(tlas, out_error);
+}
+
+LRHIAccelerationStructureBufferSizes lrhi_top_level_acceleration_structure_get_build_scratch_size(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    return ((LRHITLASBase*)tlas)->vtable->get_build_scratch_size(tlas, out_error);
+}
+
+void lrhi_reset_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    ((LRHITLASBase*)tlas)->vtable->reset(tlas, out_error);
+}
+
+void lrhi_add_top_level_acceleration_structure_instance(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error)
+{
+    ((LRHITLASBase*)tlas)->vtable->add_instance(tlas, instance_info, out_error);
 }

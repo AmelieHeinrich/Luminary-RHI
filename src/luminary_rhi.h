@@ -616,12 +616,13 @@ LRHIAccelerationStructureBufferSizes lrhi_bottom_level_acceleration_structure_ge
 void lrhi_create_top_level_acceleration_structure(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error);
 void lrhi_destroy_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas);
 void lrhi_get_top_level_acceleration_structure_info(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info);
+uint64_t lrhi_top_level_acceleration_structure_get_bindless_index(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 LRHIAccelerationStructureBufferSizes lrhi_top_level_acceleration_structure_get_build_scratch_size(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 void lrhi_reset_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 void lrhi_add_top_level_acceleration_structure_instance(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error);
 
 // Acceleration structure pass
-void lrhi_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error);
+LRHIAccelerationStructurePass lrhi_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_end(LRHIAccelerationStructurePass pass, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass pass, LRHIError* out_error);
 void lrhi_acceleration_structure_encoder_barrier(LRHIAccelerationStructurePass pass, LRHIRenderStage after_stage, LRHIError* out_error);

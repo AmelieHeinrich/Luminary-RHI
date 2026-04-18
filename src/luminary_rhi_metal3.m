@@ -16,6 +16,8 @@
 #include "ext/metal_irconverter_runtime.h"
 #include "ext/icb_shaders.h"
 
+// #define LRHI_DEBUG_METAL_PROGRAMMATIC_CAPTURE 1
+
 // ICB parameter argument structs
 typedef struct Metal3ICBDrawParameters {
     MTLResourceID icb;
@@ -265,6 +267,7 @@ typedef struct LRHITLASMetal3 {
     MTLIndirectAccelerationStructureInstanceDescriptor* mapped_instance_buffer;
 
     uint32_t instance_count;
+    uint32_t bindless_index;
 
     id<MTLBuffer> resource_id_buffer; // Needed by Metal Shader Converter
     void* mapped_resource_id_buffer;
@@ -423,6 +426,7 @@ static void                          lrhi_metal3_acceleration_structure_pass_end
 static void                          lrhi_metal3_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass as_pass, LRHIError* out_error);
 static void                          lrhi_metal3_acceleration_structure_pass_encoder_barrier(LRHIAccelerationStructurePass as_pass, LRHIRenderStage after_stage, LRHIError* out_error);
 static void                          lrhi_metal3_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+static void                          lrhi_metal3_acceleration_structure_pass_build_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
 
 static void                                 lrhi_metal3_create_bottom_level_acceleration_structure(LRHIDevice device, LRHIBLASInfo* info, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error);
 static void                                 lrhi_metal3_destroy_bottom_level_acceleration_structure(LRHIBottomLevelAccelerationStructure blas);
@@ -432,6 +436,7 @@ static LRHIAccelerationStructureBufferSizes lrhi_metal3_bottom_level_acceleratio
 static void                                 lrhi_metal3_create_top_level_acceleration_structure(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error);
 static void                                 lrhi_metal3_destroy_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas);
 static void                                 lrhi_metal3_get_top_level_acceleration_structure_info(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info);
+static uint64_t                             lrhi_metal3_top_level_acceleration_structure_get_bindless_index(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 static LRHIAccelerationStructureBufferSizes lrhi_metal3_top_level_acceleration_structure_get_build_scratch_size(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 static void                                 lrhi_metal3_reset_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 static void                                 lrhi_metal3_add_top_level_acceleration_structure_instance(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error);
@@ -619,6 +624,7 @@ static const LRHITLASVTable lrhi_metal3_tlas_vtable = {
     .destroy_top_level_acceleration_structure = lrhi_metal3_destroy_top_level_acceleration_structure,
     .get_top_level_acceleration_structure_info = lrhi_metal3_get_top_level_acceleration_structure_info,
     .get_build_scratch_size = lrhi_metal3_top_level_acceleration_structure_get_build_scratch_size,
+    .get_bindless_index = lrhi_metal3_top_level_acceleration_structure_get_bindless_index,
     .reset = lrhi_metal3_reset_top_level_acceleration_structure,
     .add_instance = lrhi_metal3_add_top_level_acceleration_structure_instance,
 };
@@ -628,6 +634,7 @@ static const LRHIAccelerationStructurePassVTable lrhi_metal3_acceleration_struct
     .barrier = lrhi_metal3_acceleration_structure_pass_barrier,
     .encoder_barrier = lrhi_metal3_acceleration_structure_pass_encoder_barrier,
     .build_blas = lrhi_metal3_acceleration_structure_pass_build_blas,
+    .build_tlas = lrhi_metal3_acceleration_structure_pass_build_tlas
 };
 
 // Bindless manager
@@ -680,7 +687,15 @@ static uint32_t lrhi_metal3_bindless_manager_write_sampler(Metal3BindlessManager
     return index;
 }
 
-// TODO: Write acceleration structure
+static uint32_t lrhi_metal3_bindless_manager_write_tlas(Metal3BindlessManager* manager, LRHITLASMetal3* tlas, LRHIError* out_error)
+{
+    IRDescriptorTableEntry entry;
+    IRDescriptorTableSetAccelerationStructure(&entry, tlas->resource_id_buffer.gpuAddress);
+
+    uint32_t index = lrhi_freelist_allocate(&manager->resource_heap_free_list);
+    memcpy(&manager->mapped_resource_heap[index], &entry, sizeof(IRDescriptorTableEntry));
+    return index;
+}
 
 static void lrhi_metal3_bindless_manager_free_resource_view(Metal3BindlessManager* manager, uint32_t index)
 {
@@ -845,6 +860,22 @@ void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
         }
 
         free(draw_mesh_tasks_src);
+    }
+
+    // Create internal residency set
+    MTLResidencySetDescriptor* residency_set_desc = [[MTLResidencySetDescriptor alloc] init];
+    residency_set_desc.initialCapacity = 128;
+
+    NSError* error = nil;
+    device->internal_residency_set = [device->device newResidencySetWithDescriptor:residency_set_desc error:&error];
+    if (error) {
+        free(device);
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Failed to create internal residency set: %s", error.localizedDescription.UTF8String);
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        *out_device = NULL;
+        return;
     }
 
     *out_device = (LRHIDevice)device;
@@ -2463,6 +2494,11 @@ static void lrhi_metal3_acceleration_structure_pass_build_tlas(LRHIAccelerationS
     LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
     LRHIBufferMetal3* metal_scratch_buffer = (LRHIBufferMetal3*)scratch_buffer;
 
+    metal_tlas->mtl_descriptor.instanceDescriptorBuffer = metal_tlas->instance_buffer;
+    metal_tlas->mtl_descriptor.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeIndirect;
+    metal_tlas->mtl_descriptor.instanceCount = metal_tlas->instance_count;
+    metal_tlas->mtl_descriptor.instanceDescriptorStride = sizeof(MTLIndirectAccelerationStructureInstanceDescriptor);
+
     [metal_as_pass->as_encoder buildAccelerationStructure:metal_tlas->acceleration_structure descriptor:metal_tlas->mtl_descriptor scratchBuffer:metal_scratch_buffer->buffer scratchBufferOffset:scratch_offset];
 }
 
@@ -2560,9 +2596,9 @@ static void lrhi_metal3_create_top_level_acceleration_structure(LRHIDevice devic
     out->device = metal_device;
     out->sizes = [metal_device->device accelerationStructureSizesWithDescriptor:as_desc];
     out->acceleration_structure = [metal_device->device newAccelerationStructureWithSize:out->sizes.accelerationStructureSize];
-
     MTLResourceID resource_id = out->acceleration_structure.gpuResourceID;
     memcpy(out->mapped_resource_id_buffer, &resource_id, sizeof(uint64_t));
+    out->bindless_index = lrhi_metal3_bindless_manager_write_tlas(&metal_device->bindless_manager, out, out_error);
 
     out->mtl_descriptor = as_desc;
     *out_tlas = (LRHITopLevelAccelerationStructure)out;
@@ -2572,6 +2608,7 @@ static void lrhi_metal3_destroy_top_level_acceleration_structure(LRHITopLevelAcc
 {
     LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
     LRHIDeviceMetal3* metal_device = metal_tlas->device;
+    lrhi_metal3_bindless_manager_free_resource_view(&metal_device->bindless_manager, metal_tlas->bindless_index);
     [metal_device->internal_residency_set removeAllocation:metal_tlas->instance_buffer];
     [metal_device->internal_residency_set removeAllocation:metal_tlas->resource_id_buffer];
     [metal_device->internal_residency_set commit];
@@ -2582,6 +2619,12 @@ static void lrhi_metal3_get_top_level_acceleration_structure_info(LRHITopLevelAc
 {
     LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
     *out_info = metal_tlas->info;
+}
+
+static uint64_t lrhi_metal3_top_level_acceleration_structure_get_bindless_index(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+    return metal_tlas->bindless_index;
 }
 
 static LRHIAccelerationStructureBufferSizes lrhi_metal3_top_level_acceleration_structure_get_build_scratch_size(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
