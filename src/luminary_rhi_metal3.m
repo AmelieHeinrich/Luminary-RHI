@@ -82,6 +82,7 @@ typedef struct LRHIDeviceMetal3 {
     id<MTLComputePipelineState> draw_indexed_icb_pipe;
     id<MTLComputePipelineState> dispatch_icb_pipe;
     id<MTLComputePipelineState> draw_mesh_tasks_icb_pipe;
+    id<MTLResidencySet> internal_residency_set;
 
     Metal3BindlessManager bindless_manager;
 } LRHIDeviceMetal3;
@@ -234,6 +235,43 @@ typedef struct LRHISamplerMetal3 {
     Metal3BindlessManager* bindless_manager;
 } LRHISamplerMetal3;
 
+typedef struct LRHIAccelerationStructurePassMetal3 {
+    LRHIAccelerationStructurePassBase base;
+    id<MTLAccelerationStructureCommandEncoder> as_encoder;
+
+    LRHICommandListMetal3* command_list;
+} LRHIAccelerationStructurePassMetal3;
+
+typedef struct LRHIBLASMetal3 {
+    LRHIBLASBase base;
+    LRHIBLASInfo info;
+    LRHIDeviceMetal3* device;
+
+    id<MTLAccelerationStructure> acceleration_structure;
+    MTLAccelerationStructureSizes sizes;
+
+    MTLPrimitiveAccelerationStructureDescriptor* mtl_descriptor;
+} LRHIBLASMetal3;
+
+typedef struct LRHITLASMetal3 {
+    LRHITLASBase base;
+    LRHITLASInfo info;
+    LRHIDeviceMetal3* device; // Used because we need to add instance buffer and resource ID buffer to internal residency set
+
+    id<MTLAccelerationStructure> acceleration_structure;
+    MTLAccelerationStructureSizes sizes;
+
+    id<MTLBuffer> instance_buffer;
+    MTLIndirectAccelerationStructureInstanceDescriptor* mapped_instance_buffer;
+
+    uint32_t instance_count;
+
+    id<MTLBuffer> resource_id_buffer; // Needed by Metal Shader Converter
+    void* mapped_resource_id_buffer;
+
+    MTLInstanceAccelerationStructureDescriptor* mtl_descriptor;
+} LRHITLASMetal3;
+
 // Forward declarations
 static MTLPixelFormat            lrhi_metal3_pixel_format(LRHITextureFormat format);
 static MTLTextureUsage           lrhi_metal3_texture_usage(LRHITextureUsage usage);
@@ -309,8 +347,12 @@ static void            lrhi_metal3_create_residency_set(LRHIDevice device, LRHIR
 static void            lrhi_metal3_destroy_residency_set(LRHIResidencySet residency_set);
 static void            lrhi_metal3_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
 static void            lrhi_metal3_residency_set_add_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+static void            lrhi_metal3_residency_set_add_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+static void            lrhi_metal3_residency_set_add_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 static void            lrhi_metal3_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
 static void            lrhi_metal3_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+static void            lrhi_metal3_residency_set_remove_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+static void            lrhi_metal3_residency_set_remove_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 static void            lrhi_metal3_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error);
 
 static void            lrhi_metal3_create_swap_chain(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error);
@@ -371,10 +413,28 @@ static void            lrhi_metal3_destroy_buffer_view(LRHIBufferView buffer_vie
 static void            lrhi_metal3_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info);
 static uint32_t        lrhi_metal3_buffer_view_get_bindless_index(LRHIBufferView buffer_view, LRHIError* out_error);
 
-static void            lrhi_metal3_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error);
-static void            lrhi_metal3_destroy_sampler(LRHISampler sampler);
-static void            lrhi_metal3_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info);
-static uint32_t        lrhi_metal3_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error);
+static void     lrhi_metal3_create_sampler(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error);
+static void     lrhi_metal3_destroy_sampler(LRHISampler sampler);
+static void     lrhi_metal3_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info);
+static uint32_t lrhi_metal3_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error);
+
+static LRHIAccelerationStructurePass lrhi_metal3_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error);
+static void                          lrhi_metal3_acceleration_structure_pass_end(LRHIAccelerationStructurePass as_pass, LRHIError* out_error);
+static void                          lrhi_metal3_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass as_pass, LRHIError* out_error);
+static void                          lrhi_metal3_acceleration_structure_pass_encoder_barrier(LRHIAccelerationStructurePass as_pass, LRHIRenderStage after_stage, LRHIError* out_error);
+static void                          lrhi_metal3_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+
+static void                                 lrhi_metal3_create_bottom_level_acceleration_structure(LRHIDevice device, LRHIBLASInfo* info, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error);
+static void                                 lrhi_metal3_destroy_bottom_level_acceleration_structure(LRHIBottomLevelAccelerationStructure blas);
+static void                                 lrhi_metal3_get_bottom_level_acceleration_structure_info(LRHIBottomLevelAccelerationStructure blas, LRHIBLASInfo* out_info);
+static LRHIAccelerationStructureBufferSizes lrhi_metal3_bottom_level_acceleration_structure_get_build_scratch_size(LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+
+static void                                 lrhi_metal3_create_top_level_acceleration_structure(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error);
+static void                                 lrhi_metal3_destroy_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas);
+static void                                 lrhi_metal3_get_top_level_acceleration_structure_info(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info);
+static LRHIAccelerationStructureBufferSizes lrhi_metal3_top_level_acceleration_structure_get_build_scratch_size(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
+static void                                 lrhi_metal3_reset_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
+static void                                 lrhi_metal3_add_top_level_acceleration_structure_instance(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error);
 
 // Vtable instances
 
@@ -395,7 +455,9 @@ static const LRHIDeviceVTable lrhi_metal3_device_vtable = {
     .create_mesh_pipeline  = lrhi_metal3_create_mesh_pipeline,
     .create_compute_pipeline = lrhi_metal3_create_compute_pipeline,
     .create_buffer_view    = lrhi_metal3_create_buffer_view,
-    .create_sampler        = lrhi_metal3_create_sampler
+    .create_sampler        = lrhi_metal3_create_sampler,
+    .create_bottom_level_acceleration_structure = lrhi_metal3_create_bottom_level_acceleration_structure,
+    .create_top_level_acceleration_structure = lrhi_metal3_create_top_level_acceleration_structure
 };
 
 static const LRHICommandQueueVTable lrhi_metal3_command_queue_vtable = {
@@ -439,6 +501,7 @@ static const LRHICommandListVTable lrhi_metal3_command_list_vtable = {
     .copy_pass_begin                        = lrhi_metal3_command_list_begin_copy_pass,
     .render_pass_begin                      = lrhi_metal3_render_pass_begin,
     .compute_pass_begin                     = lrhi_metal3_compute_pass_begin,
+    .acceleration_structure_pass_begin      = lrhi_metal3_acceleration_structure_pass_begin,
     .command_list_prepare_indirect_commands = lrhi_metal3_command_list_prepare_indirect_commands,
 };
 
@@ -456,8 +519,12 @@ static const LRHIResidencySetVTable lrhi_metal3_residency_set_vtable = {
     .destroy_residency_set = lrhi_metal3_destroy_residency_set,
     .add_texture = lrhi_metal3_residency_set_add_texture,
     .add_buffer = lrhi_metal3_residency_set_add_buffer,
+    .add_blas = lrhi_metal3_residency_set_add_blas,
+    .add_tlas = lrhi_metal3_residency_set_add_tlas,
     .remove_texture = lrhi_metal3_residency_set_remove_texture,
     .remove_buffer = lrhi_metal3_residency_set_remove_buffer,
+    .remove_blas = lrhi_metal3_residency_set_remove_blas,
+    .remove_tlas = lrhi_metal3_residency_set_remove_tlas,
     .update = lrhi_metal3_residency_set_update,
 };
 
@@ -540,6 +607,27 @@ static const LRHISamplerVTable lrhi_metal3_sampler_vtable = {
     .destroy_sampler = lrhi_metal3_destroy_sampler,
     .get_sampler_info = lrhi_metal3_get_sampler_info,
     .get_bindless_index = lrhi_metal3_sampler_get_bindless_index,
+};
+
+static const LRHIBLASVTable lrhi_metal3_blas_vtable = {
+    .destroy_bottom_level_acceleration_structure = lrhi_metal3_destroy_bottom_level_acceleration_structure,
+    .get_bottom_level_acceleration_structure_info = lrhi_metal3_get_bottom_level_acceleration_structure_info,
+    .get_build_scratch_size = lrhi_metal3_bottom_level_acceleration_structure_get_build_scratch_size,
+};
+
+static const LRHITLASVTable lrhi_metal3_tlas_vtable = {
+    .destroy_top_level_acceleration_structure = lrhi_metal3_destroy_top_level_acceleration_structure,
+    .get_top_level_acceleration_structure_info = lrhi_metal3_get_top_level_acceleration_structure_info,
+    .get_build_scratch_size = lrhi_metal3_top_level_acceleration_structure_get_build_scratch_size,
+    .reset = lrhi_metal3_reset_top_level_acceleration_structure,
+    .add_instance = lrhi_metal3_add_top_level_acceleration_structure_instance,
+};
+
+static const LRHIAccelerationStructurePassVTable lrhi_metal3_acceleration_structure_pass_vtable = {
+    .end = lrhi_metal3_acceleration_structure_pass_end,
+    .barrier = lrhi_metal3_acceleration_structure_pass_barrier,
+    .encoder_barrier = lrhi_metal3_acceleration_structure_pass_encoder_barrier,
+    .build_blas = lrhi_metal3_acceleration_structure_pass_build_blas,
 };
 
 // Bindless manager
@@ -1013,6 +1101,7 @@ static void lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue
         *out_queue = NULL;
         return;
     }
+    [queue addResidencySet:metal_device->internal_residency_set];
 
     LRHICommandQueueMetal3* out = malloc(sizeof(LRHICommandQueueMetal3));
     out->base.vtable = &lrhi_metal3_command_queue_vtable;
@@ -1520,6 +1609,22 @@ static void lrhi_metal3_residency_set_add_buffer(LRHIResidencySet residency_set,
     }
 }
 
+static void lrhi_metal3_residency_set_add_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+    LRHIResidencySetMetal3* metal_residency_set = (LRHIResidencySetMetal3*)residency_set;
+    LRHIBLASMetal3* metal_blas = (LRHIBLASMetal3*)blas;
+
+    [metal_residency_set->residency_set addAllocation:metal_blas->acceleration_structure];
+}
+
+static void lrhi_metal3_residency_set_add_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    LRHIResidencySetMetal3* metal_residency_set = (LRHIResidencySetMetal3*)residency_set;
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+
+    [metal_residency_set->residency_set addAllocation:metal_tlas->acceleration_structure];
+}
+
 static void lrhi_metal3_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
 {
     LRHIResidencySetMetal3* metal_residency_set = (LRHIResidencySetMetal3*)residency_set;
@@ -1537,6 +1642,22 @@ static void lrhi_metal3_residency_set_remove_buffer(LRHIResidencySet residency_s
     if (metal_buffer->icb) {
         [metal_residency_set->residency_set removeAllocation:metal_buffer->icb];
     }
+}
+
+static void lrhi_metal3_residency_set_remove_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+    LRHIResidencySetMetal3* metal_residency_set = (LRHIResidencySetMetal3*)residency_set;
+    LRHIBLASMetal3* metal_blas = (LRHIBLASMetal3*)blas;
+
+    [metal_residency_set->residency_set removeAllocation:metal_blas->acceleration_structure];
+}
+
+static void lrhi_metal3_residency_set_remove_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    LRHIResidencySetMetal3* metal_residency_set = (LRHIResidencySetMetal3*)residency_set;
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+
+    [metal_residency_set->residency_set removeAllocation:metal_tlas->acceleration_structure];
 }
 
 static void lrhi_metal3_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error)
@@ -2292,6 +2413,215 @@ static uint32_t lrhi_metal3_sampler_get_bindless_index(LRHISampler sampler, LRHI
 {
     LRHISamplerMetal3* metal_sampler = (LRHISamplerMetal3*)sampler;
     return metal_sampler->bindless_index;
+}
+
+// Acceleration structure pass
+
+static LRHIAccelerationStructurePass lrhi_metal3_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error)
+{
+    LRHICommandListMetal3* metal_cmd_list = (LRHICommandListMetal3*)command_list;
+    
+    LRHIAccelerationStructurePassMetal3* as_pass = calloc(1, sizeof(LRHIAccelerationStructurePassMetal3));
+    as_pass->base .vtable = &lrhi_metal3_acceleration_structure_pass_vtable;
+    as_pass->command_list = metal_cmd_list;
+    as_pass->as_encoder = [metal_cmd_list->command_buffer accelerationStructureCommandEncoder];
+    return (LRHIAccelerationStructurePass)as_pass;
+}
+
+static void lrhi_metal3_acceleration_structure_pass_end(LRHIAccelerationStructurePass as_pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIAccelerationStructurePassMetal3* metal_as_pass = (LRHIAccelerationStructurePassMetal3*)as_pass;
+    [metal_as_pass->as_encoder endEncoding];
+    free(metal_as_pass);
+}
+
+static void lrhi_metal3_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass as_pass, LRHIError* out_error)
+{
+    // no-op since Metal automatically handles synchronization for acceleration structure builds
+}
+
+static void lrhi_metal3_acceleration_structure_pass_encoder_barrier(LRHIAccelerationStructurePass as_pass, LRHIRenderStage after_stage, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIAccelerationStructurePassMetal3* metal_as_pass = (LRHIAccelerationStructurePassMetal3*)as_pass;
+    [metal_as_pass->as_encoder barrierAfterQueueStages:lrhi_metal3_render_stage_to_mtl(after_stage) beforeStages:MTLStageAccelerationStructure];
+}
+
+static void lrhi_metal3_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
+{
+    LRHIAccelerationStructurePassMetal3* metal_as_pass = (LRHIAccelerationStructurePassMetal3*)pass;
+    LRHIBLASMetal3* metal_blas = (LRHIBLASMetal3*)blas;
+    LRHIBufferMetal3* metal_scratch_buffer = (LRHIBufferMetal3*)scratch_buffer;
+
+    [metal_as_pass->as_encoder buildAccelerationStructure:metal_blas->acceleration_structure descriptor:metal_blas->mtl_descriptor scratchBuffer:metal_scratch_buffer->buffer scratchBufferOffset:scratch_offset];
+}
+
+static void lrhi_metal3_acceleration_structure_pass_build_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
+{
+    LRHIAccelerationStructurePassMetal3* metal_as_pass = (LRHIAccelerationStructurePassMetal3*)pass;
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+    LRHIBufferMetal3* metal_scratch_buffer = (LRHIBufferMetal3*)scratch_buffer;
+
+    [metal_as_pass->as_encoder buildAccelerationStructure:metal_tlas->acceleration_structure descriptor:metal_tlas->mtl_descriptor scratchBuffer:metal_scratch_buffer->buffer scratchBufferOffset:scratch_offset];
+}
+
+// BLAS
+
+static void lrhi_metal3_create_bottom_level_acceleration_structure(LRHIDevice device, LRHIBLASInfo* info, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error)
+{
+    // Convert geometries to Metal's format
+    uint32_t geometry_count = info->geometry_count;
+    NSMutableArray<MTLAccelerationStructureGeometryDescriptor*>* mtl_geometries = [NSMutableArray arrayWithCapacity:geometry_count];
+    for (uint32_t i = 0; i < geometry_count; i++) {
+        LRHIBLASGeometryInfo* geometry = &info->geometries[i];
+        LRHIBufferMetal3* metal_vertex_buffer = (LRHIBufferMetal3*)geometry->vertex_buffer;
+        LRHIBufferMetal3* metal_index_buffer = (LRHIBufferMetal3*)geometry->index_buffer;
+
+        MTLAccelerationStructureTriangleGeometryDescriptor* mtl_geometry = [[MTLAccelerationStructureTriangleGeometryDescriptor alloc] init];
+        mtl_geometry.vertexBuffer = ((LRHIBufferMetal3*)geometry->vertex_buffer)->buffer;
+        mtl_geometry.vertexStride = metal_vertex_buffer->info.stride;
+        mtl_geometry.vertexFormat = MTLAttributeFormatFloat3;
+        mtl_geometry.vertexBufferOffset = geometry->vertex_offset;
+        mtl_geometry.indexBuffer = ((LRHIBufferMetal3*)geometry->index_buffer)->buffer;
+        mtl_geometry.indexType = metal_index_buffer->info.stride == 4 ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
+        mtl_geometry.indexBufferOffset = geometry->index_offset;
+        mtl_geometry.transformationMatrixLayout = MTLMatrixLayoutRowMajor;
+        mtl_geometry.triangleCount = geometry->index_count / 3;
+        mtl_geometry.opaque = geometry->opaque ? YES : NO;
+    
+        [mtl_geometries addObject:mtl_geometry];
+    }
+    // TODO: AABB geometries
+
+    MTLPrimitiveAccelerationStructureDescriptor* as_desc = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    as_desc.usage = MTLAccelerationStructureUsagePreferFastBuild;
+    if (info->allow_update) {
+        as_desc.usage |= MTLAccelerationStructureUsageRefit;
+    }
+    as_desc.geometryDescriptors = mtl_geometries;
+    
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
+
+    LRHIBLASMetal3* out = malloc(sizeof(LRHIBLASMetal3));
+    out->base.vtable = &lrhi_metal3_blas_vtable;
+    out->info = *info;
+    out->device = metal_device;
+    out->sizes = [metal_device->device accelerationStructureSizesWithDescriptor:as_desc];
+    out->acceleration_structure = [metal_device->device newAccelerationStructureWithSize:out->sizes.accelerationStructureSize];
+    out->mtl_descriptor = as_desc;
+    *out_blas = (LRHIBottomLevelAccelerationStructure)out;
+}
+
+static void lrhi_metal3_destroy_bottom_level_acceleration_structure(LRHIBottomLevelAccelerationStructure blas)
+{
+    free(blas);
+}
+
+static void lrhi_metal3_get_bottom_level_acceleration_structure_info(LRHIBottomLevelAccelerationStructure blas, LRHIBLASInfo* out_info)
+{
+    LRHIBLASMetal3* metal_blas = (LRHIBLASMetal3*)blas;
+    *out_info = metal_blas->info;
+}
+
+static LRHIAccelerationStructureBufferSizes lrhi_metal3_bottom_level_acceleration_structure_get_build_scratch_size(LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+    LRHIBLASMetal3* metal_blas = (LRHIBLASMetal3*)blas;
+
+    LRHIAccelerationStructureBufferSizes out_sizes;
+    out_sizes.build_scratch_size = metal_blas->sizes.buildScratchBufferSize;
+    out_sizes.update_scratch_size = metal_blas->sizes.refitScratchBufferSize;
+    return out_sizes;
+}
+
+// TLAS
+
+static void lrhi_metal3_create_top_level_acceleration_structure(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error)
+{
+    MTLInstanceAccelerationStructureDescriptor* as_desc = [MTLInstanceAccelerationStructureDescriptor descriptor];
+    as_desc.instanceCount = info->max_instance_count;
+    as_desc.usage = MTLAccelerationStructureUsagePreferFastIntersection;
+    
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
+    LRHITLASMetal3* out = malloc(sizeof(LRHITLASMetal3));
+
+    // Create buffers
+    out->instance_buffer = [metal_device->device newBufferWithLength:sizeof(MTLIndirectAccelerationStructureInstanceDescriptor) * info->max_instance_count options:MTLResourceStorageModeShared];
+    out->mapped_instance_buffer = (MTLIndirectAccelerationStructureInstanceDescriptor*)out->instance_buffer.contents;
+    [metal_device->internal_residency_set addAllocation:out->instance_buffer];
+
+    out->resource_id_buffer = [metal_device->device newBufferWithLength:sizeof(uint64_t) options:MTLResourceStorageModeShared];
+    out->mapped_resource_id_buffer = (uint64_t*)out->resource_id_buffer.contents;
+    [metal_device->internal_residency_set addAllocation:out->resource_id_buffer];
+    [metal_device->internal_residency_set commit];
+
+    out->base.vtable = &lrhi_metal3_tlas_vtable;
+    out->info = *info;
+    out->device = metal_device;
+    out->sizes = [metal_device->device accelerationStructureSizesWithDescriptor:as_desc];
+    out->acceleration_structure = [metal_device->device newAccelerationStructureWithSize:out->sizes.accelerationStructureSize];
+
+    MTLResourceID resource_id = out->acceleration_structure.gpuResourceID;
+    memcpy(out->mapped_resource_id_buffer, &resource_id, sizeof(uint64_t));
+
+    out->mtl_descriptor = as_desc;
+    *out_tlas = (LRHITopLevelAccelerationStructure)out;
+}
+
+static void lrhi_metal3_destroy_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas)
+{
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+    LRHIDeviceMetal3* metal_device = metal_tlas->device;
+    [metal_device->internal_residency_set removeAllocation:metal_tlas->instance_buffer];
+    [metal_device->internal_residency_set removeAllocation:metal_tlas->resource_id_buffer];
+    [metal_device->internal_residency_set commit];
+    free(tlas);
+}
+
+static void lrhi_metal3_get_top_level_acceleration_structure_info(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info)
+{
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+    *out_info = metal_tlas->info;
+}
+
+static LRHIAccelerationStructureBufferSizes lrhi_metal3_top_level_acceleration_structure_get_build_scratch_size(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+
+    LRHIAccelerationStructureBufferSizes out_sizes;
+    out_sizes.build_scratch_size = metal_tlas->sizes.buildScratchBufferSize;
+    out_sizes.update_scratch_size = metal_tlas->sizes.refitScratchBufferSize;
+    return out_sizes;
+}
+
+static void lrhi_metal3_reset_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+    metal_tlas->instance_count = 0;
+    // Optionally, we could also clear the instance buffer here, but it's not strictly necessary since we'll overwrite it when adding instances
+}
+
+static void lrhi_metal3_add_top_level_acceleration_structure_instance(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error)
+{
+    LRHITLASMetal3* metal_tlas = (LRHITLASMetal3*)tlas;
+
+    if (metal_tlas->instance_count >= metal_tlas->info.max_instance_count) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Exceeded maximum instance count for TLAS");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return;
+    }
+
+    // Write instance data to the mapped instance buffer
+    MTLIndirectAccelerationStructureInstanceDescriptor* instance_desc = &metal_tlas->mapped_instance_buffer[metal_tlas->instance_count];
+    instance_desc->accelerationStructureID = ((LRHIBLASMetal3*)instance_info->blas)->acceleration_structure.gpuResourceID;
+    instance_desc->options = instance_info->opaque ? MTLAccelerationStructureInstanceOptionOpaque :  MTLAccelerationStructureInstanceOptionNonOpaque;
+    instance_desc->mask = 0xFF;
+    instance_desc->userID = instance_info->user_id;
+    memcpy(instance_desc->transformationMatrix.columns, instance_info->transform, sizeof(float) * 12);
+
+    metal_tlas->instance_count++;
 }
 
 // Utils

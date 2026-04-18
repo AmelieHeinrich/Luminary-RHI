@@ -160,6 +160,11 @@ typedef enum LRHICommandType {
     LUMINARY_RHI_COMMAND_TYPE_DISPATCH
 } LRHICommandType;
 
+typedef enum LRHIBottomLevelGeometryType {
+    LUMINARY_RHI_BOTTOM_LEVEL_GEOMETRY_TYPE_TRIANGLES,
+    LUMINARY_RHI_BOTTOM_LEVEL_GEOMETRY_TYPE_PROCEDURAL_AABBS
+} LRHIBottomLevelGeometryType;
+
 #define LUMINARY_TEXTURE_VIEW_ALL_MIPS 0xFFFFFFFF
 #define LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS 0xFFFFFFFF
 
@@ -172,7 +177,6 @@ LUMINARY_OPAQUE_TYPE(LRHIFence);
 LUMINARY_OPAQUE_TYPE(LRHIBuffer);
 LUMINARY_OPAQUE_TYPE(LRHITexture);
 LUMINARY_OPAQUE_TYPE(LRHISampler);
-LUMINARY_OPAQUE_TYPE(LRHIAccelerationStructure);
 LUMINARY_OPAQUE_TYPE(LRHIRenderPipeline);
 LUMINARY_OPAQUE_TYPE(LRHIComputePipeline);
 LUMINARY_OPAQUE_TYPE(LRHIMeshPipeline);
@@ -184,6 +188,8 @@ LUMINARY_OPAQUE_TYPE(LRHIShaderModule);
 LUMINARY_OPAQUE_TYPE(LRHIResidencySet);
 LUMINARY_OPAQUE_TYPE(LRHITextureView);
 LUMINARY_OPAQUE_TYPE(LRHIBufferView);
+LUMINARY_OPAQUE_TYPE(LRHIBottomLevelAccelerationStructure);
+LUMINARY_OPAQUE_TYPE(LRHITopLevelAccelerationStructure);
 
 // Structs
 
@@ -409,6 +415,43 @@ typedef struct LRHIDrawIndirectParameters {
     uint32_t threads_per_mesh_groups_z;
 } LRHIDrawIndirectParameters;
 
+typedef struct LRHIBLASGeometryInfo {
+    LRHIBuffer vertex_buffer;
+    uint32_t vertex_offset;
+    uint32_t vertex_count;
+    
+    LRHIBuffer index_buffer;
+    uint32_t index_offset;
+    uint32_t index_count;
+
+    uint8_t opaque;
+} LRHIBLASGeometryInfo;
+
+typedef struct LRHIBLASInfo {
+    uint8_t allow_update;
+    LRHIBottomLevelGeometryType geometry_type;
+    
+    uint32_t geometry_count;
+    LRHIBLASGeometryInfo* geometries;
+} LRHIBLASInfo;
+
+typedef struct LRHIAccelerationStructureBufferSizes {
+    // Acceleration structure size is hidden... just to make API parity easier
+    uint64_t build_scratch_size;
+    uint64_t update_scratch_size;
+} LRHIAccelerationStructureBufferSizes;
+
+typedef struct LRHITLASInstanceInfo {
+    LRHIBottomLevelAccelerationStructure blas;
+    float transform[12];
+    uint32_t user_id;
+    uint8_t opaque;
+} LRHITLASInstanceInfo;
+
+typedef struct LRHITLASInfo {
+    uint32_t max_instance_count;
+} LRHITLASInfo;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -482,8 +525,12 @@ void lrhi_create_residency_set(LRHIDevice device, LRHIResidencySet* out_residenc
 void lrhi_destroy_residency_set(LRHIResidencySet residency_set);
 void lrhi_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
 void lrhi_residency_set_add_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+void lrhi_residency_set_add_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+void lrhi_residency_set_add_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 void lrhi_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
 void lrhi_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+void lrhi_residency_set_remove_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+void lrhi_residency_set_remove_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
 void lrhi_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error);
 
 // SwapChain functions
@@ -559,18 +606,32 @@ void lrhi_destroy_sampler(LRHISampler sampler);
 void lrhi_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info);
 uint32_t lrhi_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_error);
 
+// BLAS
+void lrhi_create_bottom_level_acceleration_structure(LRHIDevice device, LRHIBLASInfo* info, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error);
+void lrhi_destroy_bottom_level_acceleration_structure(LRHIBottomLevelAccelerationStructure blas);
+void lrhi_get_bottom_level_acceleration_structure_info(LRHIBottomLevelAccelerationStructure blas, LRHIBLASInfo* out_info);
+LRHIAccelerationStructureBufferSizes lrhi_bottom_level_acceleration_structure_get_build_scratch_size(LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+
+// TLAS
+void lrhi_create_top_level_acceleration_structure(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error);
+void lrhi_destroy_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas);
+void lrhi_get_top_level_acceleration_structure_info(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info);
+LRHIAccelerationStructureBufferSizes lrhi_top_level_acceleration_structure_get_build_scratch_size(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
+void lrhi_reset_top_level_acceleration_structure(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
+void lrhi_add_top_level_acceleration_structure_instance(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error);
+
+// Acceleration structure pass
+void lrhi_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_end(LRHIAccelerationStructurePass pass, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass pass, LRHIError* out_error);
+void lrhi_acceleration_structure_encoder_barrier(LRHIAccelerationStructurePass pass, LRHIRenderStage after_stage, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_build_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+// TODO: Compact
+// TODO: Copy
+
 /*
     TODO:
-        Render Pass:
-            - execute indirect
-        Compute Pass:
-            - dispatch indirect
-        Acceleration structure:
-            - create/destroy
-            - get info
-            - top level
-            - bottom level
-            - get bindless index
         Acceleration structure pass:
             - create/destroy
             - get info

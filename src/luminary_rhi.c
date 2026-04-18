@@ -522,3 +522,48 @@ uint32_t lrhi_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_err
 {
     return ((LRHISamplerBase*)sampler)->vtable->get_bindless_index(sampler, out_error);
 }
+
+void lrhi_create_bottom_level_acceleration_structure(LRHIDevice device, LRHIBLASInfo* info, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_bottom_level_acceleration_structure(device, info, out_blas, out_error);
+}
+
+void lrhi_destroy_bottom_level_acceleration_structure(LRHIBottomLevelAccelerationStructure blas)
+{
+    ((LRHIBLASBase*)blas)->vtable->destroy_bottom_level_acceleration_structure(blas);
+}
+
+void lrhi_get_bottom_level_acceleration_structure_info(LRHIBottomLevelAccelerationStructure blas, LRHIBLASInfo* out_info)
+{
+    ((LRHIBLASBase*)blas)->vtable->get_bottom_level_acceleration_structure_info(blas, out_info);
+}
+
+LRHIAccelerationStructureBufferSizes lrhi_bottom_level_acceleration_structure_get_build_scratch_size(LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+    return ((LRHIBLASBase*)blas)->vtable->get_build_scratch_size(blas, out_error);
+}
+
+void lrhi_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error)
+{
+    ((LRHICommandListBase*)command_list)->vtable->acceleration_structure_pass_begin(command_list, out_error);
+}
+
+void lrhi_acceleration_structure_pass_end(LRHIAccelerationStructurePass pass, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->end(pass, out_error);
+}
+
+void lrhi_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass pass, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->barrier(pass, out_error);
+}
+
+void lrhi_acceleration_structure_encoder_barrier(LRHIAccelerationStructurePass pass, LRHIRenderStage after_stage, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->encoder_barrier(pass, after_stage, out_error);
+}
+
+void lrhi_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->build_blas(pass, blas, scratch_buffer, scratch_offset, out_error);   
+}

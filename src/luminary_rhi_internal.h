@@ -21,6 +21,8 @@ typedef struct LRHIDeviceVTable {
     void           (*create_compute_pipeline)(LRHIDevice device, LRHIComputePipelineInfo* info, LRHIComputePipeline* out_pipeline, LRHIError* out_error);
     void           (*create_buffer_view)(LRHIDevice device, LRHIBufferViewInfo* info, LRHIBufferView* out_buffer_view, LRHIError* out_error);
     void           (*create_sampler)(LRHIDevice device, LRHISamplerInfo* info, LRHISampler* out_sampler, LRHIError* out_error);
+    void           (*create_bottom_level_acceleration_structure)(LRHIDevice device, LRHIBLASInfo* info, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error);
+    void           (*create_top_level_acceleration_structure)(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error);
 } LRHIDeviceVTable;
 
 typedef struct LRHICommandQueueVTable {
@@ -65,6 +67,7 @@ typedef struct LRHICommandListVTable {
     LRHICopyPass (*copy_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
     LRHIRenderPass (*render_pass_begin)(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
     LRHIComputePass (*compute_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
+    LRHIAccelerationStructurePass (*acceleration_structure_pass_begin)(LRHICommandList command_list, LRHIError* out_error);
 } LRHICommandListVTable;
 
 typedef struct LRHICopyPassVTable {
@@ -81,8 +84,12 @@ typedef struct LRHIResidencySetVTable {
     void (*destroy_residency_set)(LRHIResidencySet residency_set);
     void (*add_texture)(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
     void (*add_buffer)(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+    void (*add_blas)(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+    void (*add_tlas)(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
     void (*remove_texture)(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error);
     void (*remove_buffer)(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error);
+    void (*remove_blas)(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+    void (*remove_tlas)(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
     void (*update)(LRHIResidencySet residency_set, LRHIError* out_error);
 } LRHIResidencySetVTable;
 
@@ -158,25 +165,50 @@ typedef struct LRHISamplerVTable {
     uint32_t (*get_bindless_index)(LRHISampler sampler, LRHIError* out_error);
 } LRHISamplerVTable;
 
+typedef struct LRHIAccelerationStructurePassVTable {
+    void (*end)(LRHIAccelerationStructurePass pass, LRHIError* out_error);
+    void (*barrier)(LRHIAccelerationStructurePass pass, LRHIError* out_error);
+    void (*encoder_barrier)(LRHIAccelerationStructurePass pass, LRHIRenderStage after_stage, LRHIError* out_error);
+    void (*build_blas)(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+    void (*build_tlas)(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+} LRHIAccelerationStructurePassVTable;
+
+typedef struct LRHIBLASVTable {
+    void (*destroy_bottom_level_acceleration_structure)(LRHIBottomLevelAccelerationStructure blas);
+    void (*get_bottom_level_acceleration_structure_info)(LRHIBottomLevelAccelerationStructure blas, LRHIBLASInfo* out_info);
+    LRHIAccelerationStructureBufferSizes (*get_build_scratch_size)(LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
+} LRHIBLASVTable;
+
+typedef struct LRHITLASVTable {
+    void (*destroy_top_level_acceleration_structure)(LRHITopLevelAccelerationStructure tlas);
+    void (*get_top_level_acceleration_structure_info)(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info);
+    LRHIAccelerationStructureBufferSizes (*get_build_scratch_size)(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
+    void (*reset)(LRHITopLevelAccelerationStructure tlas, LRHIError* out_error);
+    void (*add_instance)(LRHITopLevelAccelerationStructure tlas, LRHITLASInstanceInfo* instance_info, LRHIError* out_error);
+} LRHITLASVTable;
+
 // Base structs — must be the first member of every backend struct.
-typedef struct LRHIDeviceBase          { const LRHIDeviceVTable*          vtable; } LRHIDeviceBase;
-typedef struct LRHICommandQueueBase    { const LRHICommandQueueVTable*    vtable; } LRHICommandQueueBase;
-typedef struct LRHIFenceBase           { const LRHIFenceVTable*           vtable; } LRHIFenceBase;
-typedef struct LRHITextureBase         { const LRHITextureVTable*         vtable; } LRHITextureBase;
-typedef struct LRHIBufferBase          { const LRHIBufferVTable*          vtable; } LRHIBufferBase;
-typedef struct LRHICommandListBase     { const LRHICommandListVTable*     vtable; } LRHICommandListBase;
-typedef struct LRHICopyPassBase        { const LRHICopyPassVTable*        vtable; } LRHICopyPassBase;
-typedef struct LRHIResidencySetBase    { const LRHIResidencySetVTable*    vtable; } LRHIResidencySetBase;
-typedef struct LRHISwapChainBase       { const LRHISwapChainVTable*       vtable; } LRHISwapChainBase;
-typedef struct LRHITextureViewBase     { const LRHITextureViewVTable*     vtable; } LRHITextureViewBase;
-typedef struct LRHIRenderPassBase      { const LRHIRenderPassVTable*      vtable; } LRHIRenderPassBase;
-typedef struct LRHIShaderModuleBase    { const LRHIShaderModuleVTable*    vtable; } LRHIShaderModuleBase;
-typedef struct LRHIRenderPipelineBase  { const LRHIRenderPipelineVTable*  vtable; } LRHIRenderPipelineBase;
-typedef struct LRHIMeshPipelineBase    { const LRHIMeshPipelineVTable*    vtable; } LRHIMeshPipelineBase;
-typedef struct LRHIComputePipelineBase { const LRHIComputePipelineVTable* vtable; } LRHIComputePipelineBase;
-typedef struct LRHIComputePassBase     { const LRHIComputePassVTable*     vtable; } LRHIComputePassBase;
-typedef struct LRHIBufferViewBase      { const LRHIBufferViewVTable*      vtable; } LRHIBufferViewBase;
-typedef struct LRHISamplerBase         { const LRHISamplerVTable*         vtable; } LRHISamplerBase;
+typedef struct LRHIDeviceBase                    { const LRHIDeviceVTable*          vtable; } LRHIDeviceBase;
+typedef struct LRHICommandQueueBase              { const LRHICommandQueueVTable*    vtable; } LRHICommandQueueBase;
+typedef struct LRHIFenceBase                     { const LRHIFenceVTable*           vtable; } LRHIFenceBase;
+typedef struct LRHITextureBase                   { const LRHITextureVTable*         vtable; } LRHITextureBase;
+typedef struct LRHIBufferBase                    { const LRHIBufferVTable*          vtable; } LRHIBufferBase;
+typedef struct LRHICommandListBase               { const LRHICommandListVTable*     vtable; } LRHICommandListBase;
+typedef struct LRHICopyPassBase                  { const LRHICopyPassVTable*        vtable; } LRHICopyPassBase;
+typedef struct LRHIResidencySetBase              { const LRHIResidencySetVTable*    vtable; } LRHIResidencySetBase;
+typedef struct LRHISwapChainBase                 { const LRHISwapChainVTable*       vtable; } LRHISwapChainBase;
+typedef struct LRHITextureViewBase               { const LRHITextureViewVTable*     vtable; } LRHITextureViewBase;
+typedef struct LRHIRenderPassBase                { const LRHIRenderPassVTable*      vtable; } LRHIRenderPassBase;
+typedef struct LRHIShaderModuleBase              { const LRHIShaderModuleVTable*    vtable; } LRHIShaderModuleBase;
+typedef struct LRHIRenderPipelineBase            { const LRHIRenderPipelineVTable*  vtable; } LRHIRenderPipelineBase;
+typedef struct LRHIMeshPipelineBase              { const LRHIMeshPipelineVTable*    vtable; } LRHIMeshPipelineBase;
+typedef struct LRHIComputePipelineBase           { const LRHIComputePipelineVTable* vtable; } LRHIComputePipelineBase;
+typedef struct LRHIComputePassBase               { const LRHIComputePassVTable*     vtable; } LRHIComputePassBase;
+typedef struct LRHIBufferViewBase                { const LRHIBufferViewVTable*      vtable; } LRHIBufferViewBase;
+typedef struct LRHISamplerBase                   { const LRHISamplerVTable*         vtable; } LRHISamplerBase;
+typedef struct LRHIBLASBase                      { const LRHIBLASVTable*            vtable; } LRHIBLASBase;
+typedef struct LRHIAccelerationStructurePassBase { const LRHIAccelerationStructurePassVTable* vtable; } LRHIAccelerationStructurePassBase;
+typedef struct LRHITLASBase                      { const LRHITLASVTable*            vtable; } LRHITLASBase;
 
 #ifdef LRHI_MACOS
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);

@@ -1,7 +1,13 @@
 ## RHI
 
-- Execute indirect
 - Acceleration structure
+
+## Raytracing
+
+- Fuck you to raytracing pipelines for now
+- Triangle geometry
+- Procedural geometry
+- BLAS compaction
 
 ## Examples
 
