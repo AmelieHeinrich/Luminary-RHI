@@ -1,13 +1,9 @@
-## RHI
-
-- Acceleration structure
-
 ## Raytracing
 
-- Fuck you to raytracing pipelines for now
-- Triangle geometry
 - Procedural geometry
 - BLAS compaction
+- AS copy
+- AS refit
 
 ## Examples
 
@@ -27,3 +23,4 @@
 - Timestamps query
 - Hillaire sky
 - Slug text rendering
+- Compute skinning

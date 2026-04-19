@@ -416,15 +416,23 @@ typedef struct LRHIDrawIndirectParameters {
 } LRHIDrawIndirectParameters;
 
 typedef struct LRHIBLASGeometryInfo {
-    LRHIBuffer vertex_buffer;
-    uint32_t vertex_offset;
-    uint32_t vertex_count;
-    
-    LRHIBuffer index_buffer;
-    uint32_t index_offset;
-    uint32_t index_count;
-
     uint8_t opaque;
+    union {
+        struct {
+            LRHIBuffer vertex_buffer;
+            uint32_t   vertex_offset;
+            uint32_t   vertex_count;
+            LRHIBuffer index_buffer;
+            uint32_t   index_offset;
+            uint32_t   index_count;
+        } triangles;
+        struct {
+            LRHIBuffer aabb_buffer;
+            uint64_t   aabb_offset; // byte offset into buffer
+            uint32_t   aabb_count;
+            uint32_t   aabb_stride; // bytes between entries (min 24: float3 min + float3 max)
+        } aabbs;
+    };
 } LRHIBLASGeometryInfo;
 
 typedef struct LRHIBLASInfo {
@@ -608,6 +616,8 @@ uint32_t lrhi_sampler_get_bindless_index(LRHISampler sampler, LRHIError* out_err
 
 // BLAS
 void lrhi_create_bottom_level_acceleration_structure(LRHIDevice device, LRHIBLASInfo* info, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error);
+// Allocates a BLAS sized exactly for compaction. compacted_size must be read back from a buffer written by lrhi_acceleration_structure_pass_write_compacted_blas_size.
+void lrhi_create_compacted_bottom_level_acceleration_structure(LRHIDevice device, uint64_t compacted_size, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error);
 void lrhi_destroy_bottom_level_acceleration_structure(LRHIBottomLevelAccelerationStructure blas);
 void lrhi_get_bottom_level_acceleration_structure_info(LRHIBottomLevelAccelerationStructure blas, LRHIBLASInfo* out_info);
 LRHIAccelerationStructureBufferSizes lrhi_bottom_level_acceleration_structure_get_build_scratch_size(LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error);
@@ -628,8 +638,16 @@ void lrhi_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass pass
 void lrhi_acceleration_structure_encoder_barrier(LRHIAccelerationStructurePass pass, LRHIRenderStage after_stage, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_build_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
-// TODO: Compact
-// TODO: Copy
+// Writes the post-compaction byte size of blas into dst_buffer[dst_offset] as a uint64. Must be called after build_blas in the same pass.
+void lrhi_acceleration_structure_pass_write_compacted_blas_size(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer dst_buffer, uint64_t dst_offset, LRHIError* out_error);
+// Performs a copy+compact from src_blas into dst_blas. dst_blas must have been created with lrhi_create_compacted_bottom_level_acceleration_structure.
+void lrhi_acceleration_structure_pass_compact_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure src_blas, LRHIBottomLevelAccelerationStructure dst_blas, LRHIError* out_error);
+// In-place refit — blas must have been created with allow_update=true.
+void lrhi_acceleration_structure_pass_refit_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_refit_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
+// Exact copy (no compaction) — dst must be the same size as src.
+void lrhi_acceleration_structure_pass_copy_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure src_blas, LRHIBottomLevelAccelerationStructure dst_blas, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_copy_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure src_tlas, LRHITopLevelAccelerationStructure dst_tlas, LRHIError* out_error);
 
 /*
     TODO:

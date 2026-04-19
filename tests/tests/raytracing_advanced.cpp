@@ -112,11 +112,11 @@ public:
 
         // Non-opaque geometry
         LRHIBLASGeometryInfo geom = {};
-        geom.vertex_buffer = _vertex_buffer;
-        geom.vertex_count  = 3;
-        geom.index_buffer  = _index_buffer;
-        geom.index_count   = 3;
-        geom.opaque        = 0;
+        geom.opaque                  = 0;
+        geom.triangles.vertex_buffer = _vertex_buffer;
+        geom.triangles.vertex_count  = 3;
+        geom.triangles.index_buffer  = _index_buffer;
+        geom.triangles.index_count   = 3;
 
         LRHIBLASInfo blas_info = {};
         blas_info.geometry_type  = LUMINARY_RHI_BOTTOM_LEVEL_GEOMETRY_TYPE_TRIANGLES;
@@ -331,11 +331,11 @@ struct rt_multi_instance_base : public test
         }
 
         LRHIBLASGeometryInfo geom = {};
-        geom.vertex_buffer = _vertex_buffer;
-        geom.vertex_count  = 3;
-        geom.index_buffer  = _index_buffer;
-        geom.index_count   = 3;
-        geom.opaque        = 1;
+        geom.opaque                  = 1;
+        geom.triangles.vertex_buffer = _vertex_buffer;
+        geom.triangles.vertex_count  = 3;
+        geom.triangles.index_buffer  = _index_buffer;
+        geom.triangles.index_count   = 3;
 
         LRHIBLASInfo blas_info = {};
         blas_info.geometry_type  = LUMINARY_RHI_BOTTOM_LEVEL_GEOMETRY_TYPE_TRIANGLES;

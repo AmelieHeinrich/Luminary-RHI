@@ -2,16 +2,18 @@
 #include <cstring>
 #include <string>
 
-class raytracing_triangle_test : public test
+// AABB buffer layout matching MTLAxisAlignedBoundingBox: float3 min + float3 max (24 bytes)
+struct AABBEntry { float min_x, min_y, min_z, max_x, max_y, max_z; };
+
+class raytracing_aabb_test : public test
 {
     static constexpr uint32_t W = 128;
     static constexpr uint32_t H = 128;
 
     LRHIDevice _device = nullptr;
 
-    LRHIBuffer  _vertex_buffer  = nullptr;
-    LRHIBuffer  _index_buffer   = nullptr;
-    LRHIBuffer  _scratch_buffer = nullptr;
+    LRHIBuffer _aabb_buffer   = nullptr;
+    LRHIBuffer _scratch_buffer = nullptr;
 
     LRHIBottomLevelAccelerationStructure _blas = nullptr;
     LRHITopLevelAccelerationStructure    _tlas = nullptr;
@@ -19,17 +21,17 @@ class raytracing_triangle_test : public test
     LRHITexture     _output_texture = nullptr;
     LRHITextureView _output_view    = nullptr;
 
-    LRHIShaderModule     _compute_shader = nullptr;
-    LRHIComputePipeline  _pipeline       = nullptr;
+    LRHIShaderModule    _compute_shader = nullptr;
+    LRHIComputePipeline _pipeline       = nullptr;
 
     LRHIResidencySet _rs = nullptr;
 
 public:
-    raytracing_triangle_test()
+    raytracing_aabb_test()
     {
         type        = test_type::texture;
-        name        = "raytracing_triangle";
-        source_path = "tests/golden/raytracing_triangle.png";
+        name        = "raytracing_aabb";
+        source_path = "tests/golden/raytracing_aabb.png";
     }
 
     void init(LRHIDevice device) override
@@ -42,75 +44,55 @@ public:
 
         LRHIError err = {};
 
-        // ---- vertex buffer: 3 × float3 ----
-        static const float kVertices[9] = {
-             0.0f,  0.5f, 0.0f,  // v0 top
-            -0.5f, -0.5f, 0.0f,  // v1 bottom-left
-             0.5f, -0.5f, 0.0f,  // v2 bottom-right
-        };
+        // AABB covering the center of the view: XY -0.5..0.5, Z -0.5..0.5
+        static const AABBEntry kAABB = { -0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f };
         {
             LRHIBufferInfo bi = {};
-            bi.size   = sizeof(kVertices);
-            bi.stride = sizeof(float) * 3;
+            bi.size   = sizeof(AABBEntry);
+            bi.stride = sizeof(AABBEntry);
             bi.usage  = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_STAGING | LUMINARY_RHI_BUFFER_USAGE_SHADER_READ);
-            lrhi_create_buffer(device, &bi, &_vertex_buffer, &err);
-            void* ptr = lrhi_buffer_map(_vertex_buffer, &err);
-            memcpy(ptr, kVertices, sizeof(kVertices));
-            lrhi_buffer_unmap(_vertex_buffer);
+            lrhi_create_buffer(device, &bi, &_aabb_buffer, &err);
+            void* ptr = lrhi_buffer_map(_aabb_buffer, &err);
+            memcpy(ptr, &kAABB, sizeof(kAABB));
+            lrhi_buffer_unmap(_aabb_buffer);
         }
 
-        // ---- index buffer: uint32_t [0,1,2] ----
-        static const uint32_t kIndices[3] = { 0, 1, 2 };
-        {
-            LRHIBufferInfo bi = {};
-            bi.size   = sizeof(kIndices);
-            bi.stride = sizeof(uint32_t);
-            bi.usage  = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_STAGING | LUMINARY_RHI_BUFFER_USAGE_SHADER_READ);
-            lrhi_create_buffer(device, &bi, &_index_buffer, &err);
-            void* ptr = lrhi_buffer_map(_index_buffer, &err);
-            memcpy(ptr, kIndices, sizeof(kIndices));
-            lrhi_buffer_unmap(_index_buffer);
-        }
-
-        // ---- BLAS ----
+        // BLAS with procedural AABB geometry
         LRHIBLASGeometryInfo geom = {};
-        geom.opaque                    = 1;
-        geom.triangles.vertex_buffer   = _vertex_buffer;
-        geom.triangles.vertex_offset   = 0;
-        geom.triangles.vertex_count    = 3;
-        geom.triangles.index_buffer    = _index_buffer;
-        geom.triangles.index_offset    = 0;
-        geom.triangles.index_count     = 3;
+        geom.opaque              = 0; // non-opaque so rq.Proceed() fires CandidateType
+        geom.aabbs.aabb_buffer   = _aabb_buffer;
+        geom.aabbs.aabb_offset   = 0;
+        geom.aabbs.aabb_count    = 1;
+        geom.aabbs.aabb_stride   = sizeof(AABBEntry);
 
         LRHIBLASInfo blas_info = {};
-        blas_info.allow_update   = 0;
-        blas_info.geometry_type  = LUMINARY_RHI_BOTTOM_LEVEL_GEOMETRY_TYPE_TRIANGLES;
+        blas_info.allow_update  = 0;
+        blas_info.geometry_type  = LUMINARY_RHI_BOTTOM_LEVEL_GEOMETRY_TYPE_PROCEDURAL_AABBS;
         blas_info.geometry_count = 1;
         blas_info.geometries     = &geom;
         lrhi_create_bottom_level_acceleration_structure(device, &blas_info, &_blas, &err);
         if (!_blas) return;
 
-        // ---- TLAS ----
+        // TLAS
         LRHITLASInfo tlas_info = {};
         tlas_info.max_instance_count = 1;
         lrhi_create_top_level_acceleration_structure(device, &tlas_info, &_tlas, &err);
         if (!_tlas) return;
 
-        // Column major: 4 columns of 3 floats (MTLPackedFloat4x3 layout)
         static const float kIdentity[12] = {
-            1.0f, 0.0f, 0.0f,  // col 0
-            0.0f, 1.0f, 0.0f,  // col 1
-            0.0f, 0.0f, 1.0f,  // col 2
-            0.0f, 0.0f, 0.0f,  // col 3 (translation)
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f,
+            0.0f, 0.0f, 0.0f,
         };
         LRHITLASInstanceInfo inst = {};
         inst.blas    = _blas;
         inst.user_id = 0;
-        inst.opaque  = 1;
+        inst.opaque  = 0;
         memcpy(inst.transform, kIdentity, sizeof(kIdentity));
         lrhi_add_top_level_acceleration_structure_instance(_tlas, &inst, &err);
 
-        // ---- scratch buffer (BLAS + TLAS) ----
+        // Scratch buffer
         LRHIAccelerationStructureBufferSizes blas_sizes =
             lrhi_bottom_level_acceleration_structure_get_build_scratch_size(_blas, &err);
         LRHIAccelerationStructureBufferSizes tlas_sizes =
@@ -119,17 +101,16 @@ public:
         static constexpr uint64_t kAlign = 256;
         uint64_t blas_scratch_aligned = (blas_sizes.build_scratch_size + kAlign - 1) & ~(kAlign - 1);
         uint64_t scratch_total        = blas_scratch_aligned + tlas_sizes.build_scratch_size;
-
         {
             LRHIBufferInfo bi = {};
-            bi.size   = scratch_total;
+            bi.size   = scratch_total ? scratch_total : 256;
             bi.stride = 1;
             bi.usage  = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_READ | LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE);
             lrhi_create_buffer(device, &bi, &_scratch_buffer, &err);
         }
         if (!_scratch_buffer) return;
 
-        // ---- output texture ----
+        // Output texture
         {
             LRHITextureInfo ti = {};
             ti.width        = W;
@@ -148,9 +129,9 @@ public:
                                     0, LUMINARY_TEXTURE_VIEW_ALL_MIPS,
                                     0, LUMINARY_TEXTURE_VIEW_ALL_ARRAY_LAYERS);
 
-        // ---- compute pipeline ----
+        // Compute pipeline
         std::string err_str;
-        std::string src = dh_read_shader_file("shaders/tests/raytracing_triangle.hlsl");
+        std::string src = dh_read_shader_file("shaders/tests/raytracing_aabb.hlsl");
         if (src.empty()) return;
         auto [bc, sz] = dh_compile_stage(src, LUMINARY_SHADER_STAGE_COMPUTE, "CSMain");
         if (!bc) return;
@@ -158,15 +139,14 @@ public:
         if (!_compute_shader) return;
 
         LRHIComputePipelineInfo pi = {};
-        pi.compute_shader            = _compute_shader;
+        pi.compute_shader             = _compute_shader;
         pi.supports_indirect_commands = 0;
         lrhi_create_compute_pipeline(device, &pi, &_pipeline, &err);
 
-        // ---- residency set ----
+        // Residency set
         lrhi_create_residency_set(device, &_rs, &err);
         lrhi_residency_set_add_texture(_rs, _output_texture, nullptr);
-        lrhi_residency_set_add_buffer(_rs, _vertex_buffer,   nullptr);
-        lrhi_residency_set_add_buffer(_rs, _index_buffer,    nullptr);
+        lrhi_residency_set_add_buffer(_rs, _aabb_buffer,     nullptr);
         lrhi_residency_set_add_buffer(_rs, _scratch_buffer,  nullptr);
         lrhi_residency_set_add_blas(_rs, _blas, nullptr);
         lrhi_residency_set_add_tlas(_rs, _tlas, nullptr);
@@ -197,7 +177,6 @@ public:
         static constexpr uint64_t kAlign = 256;
         uint64_t blas_scratch_aligned = (blas_sizes.build_scratch_size + kAlign - 1) & ~(kAlign - 1);
 
-        std::string err_str;
         LRHICommandQueue queue = nullptr;
         LRHIFence        fence = nullptr;
         LRHICommandList  cmd   = nullptr;
@@ -210,50 +189,35 @@ public:
         lerr = {};
         lrhi_command_list_begin(cmd, &lerr);
         if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
-            lrhi_destroy_command_list(cmd);
-            lrhi_destroy_fence(fence);
-            lrhi_destroy_command_queue(queue);
+            lrhi_destroy_command_list(cmd); lrhi_destroy_fence(fence); lrhi_destroy_command_queue(queue);
             return {false, std::string("cmd begin: ") + lerr.message};
         }
 
-        // AS build pass
+        LRHIAccelerationStructureBufferSizes tlas_sizes =
+            lrhi_top_level_acceleration_structure_get_build_scratch_size(_tlas, &lerr);
+
         LRHIAccelerationStructurePass as_pass = lrhi_acceleration_structure_pass_begin(cmd, &lerr);
         lrhi_acceleration_structure_pass_build_blas(as_pass, _blas, _scratch_buffer, 0, &lerr);
         lrhi_acceleration_structure_pass_barrier(as_pass, &lerr);
         lrhi_acceleration_structure_pass_build_tlas(as_pass, _tlas, _scratch_buffer, blas_scratch_aligned, &lerr);
         lrhi_acceleration_structure_pass_end(as_pass, &lerr);
 
-        // Compute pass
         LRHIComputePass compute_pass = lrhi_compute_pass_begin(cmd, &lerr);
         lrhi_compute_pass_encoder_barrier(compute_pass, LUMINARY_RHI_RENDER_STAGE_ACCELERATION_STRUCTURE_BUILD, &lerr);
         lrhi_compute_pass_set_pipeline(compute_pass, _pipeline, &lerr);
 
-        struct PushConstants {
-            uint32_t output_texture;
-            uint32_t tlas;
-        } pc = { output_index, (uint32_t)tlas_index };
+        struct PushConstants { uint32_t output_texture; uint32_t tlas; } pc = { output_index, (uint32_t)tlas_index };
         lrhi_compute_pass_set_push_constants(compute_pass, &pc, sizeof(pc), &lerr);
-
         lrhi_compute_pass_dispatch(compute_pass, 16, 16, 1, 8, 8, 1, &lerr);
         lrhi_compute_pass_end(compute_pass, &lerr);
 
         if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
             lrhi_command_list_end(cmd, nullptr);
-            lrhi_destroy_command_list(cmd);
-            lrhi_destroy_fence(fence);
-            lrhi_destroy_command_queue(queue);
-            return {false, std::string("compute dispatch: ") + lerr.message};
+            lrhi_destroy_command_list(cmd); lrhi_destroy_fence(fence); lrhi_destroy_command_queue(queue);
+            return {false, std::string("pass error: ") + lerr.message};
         }
 
-        lerr = {};
         lrhi_command_list_end(cmd, &lerr);
-        if (lerr.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
-            lrhi_destroy_command_list(cmd);
-            lrhi_destroy_fence(fence);
-            lrhi_destroy_command_queue(queue);
-            return {false, std::string("cmd end: ") + lerr.message};
-        }
-
         lrhi_command_queue_submit(queue, &cmd, 1, fence, 1, nullptr, 0, nullptr);
         lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, nullptr);
         lrhi_fence_wait(fence, 1, 5000000000ULL, nullptr);
@@ -273,10 +237,9 @@ public:
         if (_tlas)           { lrhi_destroy_top_level_acceleration_structure(_tlas);               _tlas           = nullptr; }
         if (_blas)           { lrhi_destroy_bottom_level_acceleration_structure(_blas);            _blas           = nullptr; }
         if (_scratch_buffer) { lrhi_destroy_buffer(_scratch_buffer);                               _scratch_buffer = nullptr; }
-        if (_index_buffer)   { lrhi_destroy_buffer(_index_buffer);                                 _index_buffer   = nullptr; }
-        if (_vertex_buffer)  { lrhi_destroy_buffer(_vertex_buffer);                                _vertex_buffer  = nullptr; }
+        if (_aabb_buffer)    { lrhi_destroy_buffer(_aabb_buffer);                                  _aabb_buffer    = nullptr; }
         if (_output_texture) { lrhi_destroy_texture(_output_texture);                              _output_texture = nullptr; }
     }
 };
 
-REGISTER_TEST(raytracing_triangle_test);
+REGISTER_TEST(raytracing_aabb_test);

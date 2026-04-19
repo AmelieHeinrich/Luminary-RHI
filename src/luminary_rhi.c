@@ -590,7 +590,42 @@ void lrhi_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass p
 
 void lrhi_acceleration_structure_pass_build_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
 {
-    ((LRHIAccelerationStructurePassBase*)pass)->vtable->build_tlas(pass, tlas, scratch_buffer, scratch_offset, out_error);   
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->build_tlas(pass, tlas, scratch_buffer, scratch_offset, out_error);
+}
+
+void lrhi_acceleration_structure_pass_write_compacted_blas_size(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer dst_buffer, uint64_t dst_offset, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->write_compacted_blas_size(pass, blas, dst_buffer, dst_offset, out_error);
+}
+
+void lrhi_acceleration_structure_pass_compact_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure src_blas, LRHIBottomLevelAccelerationStructure dst_blas, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->compact_blas(pass, src_blas, dst_blas, out_error);
+}
+
+void lrhi_acceleration_structure_pass_refit_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->refit_blas(pass, blas, scratch_buffer, scratch_offset, out_error);
+}
+
+void lrhi_acceleration_structure_pass_refit_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure tlas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->refit_tlas(pass, tlas, scratch_buffer, scratch_offset, out_error);
+}
+
+void lrhi_acceleration_structure_pass_copy_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure src_blas, LRHIBottomLevelAccelerationStructure dst_blas, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->copy_blas(pass, src_blas, dst_blas, out_error);
+}
+
+void lrhi_acceleration_structure_pass_copy_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure src_tlas, LRHITopLevelAccelerationStructure dst_tlas, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->copy_tlas(pass, src_tlas, dst_tlas, out_error);
+}
+
+void lrhi_create_compacted_bottom_level_acceleration_structure(LRHIDevice device, uint64_t compacted_size, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error)
+{
+    ((LRHIDeviceBase*)device)->vtable->create_compacted_bottom_level_acceleration_structure(device, compacted_size, out_blas, out_error);
 }
 
 void lrhi_create_top_level_acceleration_structure(LRHIDevice device, LRHITLASInfo* info, LRHITopLevelAccelerationStructure* out_tlas, LRHIError* out_error)
