@@ -4,6 +4,7 @@
 #include "examples/cornell_pathtracer_example.h"
 #include "examples/hello_cube_example.h"
 #include "examples/hello_triangle_example.h"
+#include "examples/pbr_gltf_example.h"
 #include "examples/volumetrics_example.h"
 #include "ext/imgui/imgui.h"
 
@@ -99,7 +100,7 @@ int main(void)
     LRHIError error = {};
 
     LRHIDevice device = nullptr;
-    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL4, &device, 0, &error);
+    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL3, &device, 0, &error);
     if (error.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
         printf("create_device: %s\n", error.message);
         return 1;
@@ -271,6 +272,13 @@ int main(void)
                     "cornell_pathtracer",
                     "Cornell Pathtracer",
                     "CPU-built Cornell box traced in compute RayQuery with history accumulation and tonemapping.",
+                    active_example,
+                    device,
+                    sc_info.format);
+                AddExample<PbrGltfExample>(
+                    "pbr_gltf",
+                    "PBR glTF",
+                    "Forward-rendered glTF model viewer using load_mesh/load_skinned_mesh and PBR maps.",
                     active_example,
                     device,
                     sc_info.format);
