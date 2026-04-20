@@ -5,8 +5,6 @@
 
 ## Examples
 
-- Triangle
-- Cube
 - Downsample/upsample bloom
 - GPU frustum culling
 - Compute particles

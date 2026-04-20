@@ -28,15 +28,17 @@ target("luminary_rhi")
 
 target("examples")
     set_kind("binary")
-    add_files("examples/*.cpp")
+    add_files("examples/*.cpp", "examples/imgui/*.cpp", "examples/examples/*.cpp")
+    add_files("examples/imgui/backends/imgui_impl_luminary.cpp")
     add_deps("luminary_rhi", "shader_compiler")
     add_includedirs("extras/shader_compiler")
 
     if is_plat("macosx") then
-        add_frameworks("Foundation", "Metal", "QuartzCore", "Cocoa")
+        add_frameworks("Foundation", "Metal", "QuartzCore", "Cocoa", "GameController")
         add_files("examples/**.mm")
         add_rpathdirs("bin/")
         add_syslinks("bin/libdxcompiler.dylib", "bin/libmetalirconverter.dylib")
+        add_files("examples/imgui/backends/imgui_impl_osx.mm")
     end
 
 target("shader_compiler")

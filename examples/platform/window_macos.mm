@@ -1,6 +1,7 @@
 #include "window_macos.h"
 
 MacOSWindow::MacOSWindow()
+    : escape_pressed(false)
 {
     // 1. Initialize the Application
     NSApplication* app = [NSApplication sharedApplication];
@@ -39,6 +40,8 @@ MacOSWindow::MacOSWindow()
     NSView* contentView = window.contentView;
     contentView.wantsLayer = YES;
     contentView.layer = metal_layer;
+    metal_layer.contentsScale = window.backingScaleFactor;
+    update_drawable_size();
 
     // 5. Present the Window
     [window makeKeyAndOrderFront:nil];
@@ -47,6 +50,15 @@ MacOSWindow::MacOSWindow()
     
     // Mark the app as finished launching explicitly since we aren't using the standard NSApp.run
     [app finishLaunching];
+}
+
+void MacOSWindow::update_drawable_size() const
+{
+    NSView* contentView = window.contentView;
+    NSRect backingRect = [contentView convertRectToBacking:contentView.bounds];
+    CGSize drawableSize = CGSizeMake(backingRect.size.width, backingRect.size.height);
+    metal_layer.contentsScale = window.backingScaleFactor;
+    metal_layer.drawableSize = drawableSize;
 }
 
 MacOSWindow::~MacOSWindow()
@@ -68,15 +80,27 @@ void MacOSWindow::poll_events()
                                           inMode:NSDefaultRunLoopMode
                                          dequeue:YES]))
     {
+        if (event.type == NSEventTypeKeyDown && event.keyCode == 53) {
+            escape_pressed = true;
+        }
         [NSApp sendEvent:event];
     }
     
     [NSApp updateWindows];
+    update_drawable_size();
+}
+
+bool MacOSWindow::consume_escape_pressed()
+{
+    bool was_pressed = escape_pressed;
+    escape_pressed = false;
+    return was_pressed;
 }
 
 void MacOSWindow::get_width_and_height(int* width, int* height) const
 {
-    NSRect bounds = [window.contentView bounds];
-    *width = (int)bounds.size.width;
-    *height = (int)bounds.size.height;
+    update_drawable_size();
+    CGSize drawableSize = metal_layer.drawableSize;
+    *width = static_cast<int>(drawableSize.width);
+    *height = static_cast<int>(drawableSize.height);
 }
