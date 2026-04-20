@@ -2599,6 +2599,7 @@ static void lrhi_metal4_destroy_sampler(LRHISampler sampler)
 {
     LRHISamplerMetal4* metal_sampler = (LRHISamplerMetal4*)sampler;
     lrhi_metal4_bindless_manager_free_sampler(metal_sampler->bindless_manager, metal_sampler->bindless_index);
+    metal_sampler->sampler_state = nil;
     LRHI_FREE(sampler);
 }
 

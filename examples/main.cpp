@@ -1,6 +1,7 @@
 #include "luminary_rhi.h"
 #include "window.h"
 #include "examples/compute_particles_example.h"
+#include "examples/cornell_pathtracer_example.h"
 #include "examples/hello_cube_example.h"
 #include "examples/hello_triangle_example.h"
 #include "examples/volumetrics_example.h"
@@ -179,7 +180,11 @@ int main(void)
     // Main loop
     // ---------------------------------------------------------------------------
     while (!window->should_close()) {
+#ifdef __APPLE__
         @autoreleasepool {
+#else
+            {
+#endif
             window->poll_events();
             window->get_width_and_height(&width, &height);
             if (width <= 0 || height <= 0)
@@ -256,6 +261,13 @@ int main(void)
                     "volumetrics",
                     "Volumetrics",
                     "Simple volumetric clouds using a compute-generated Worley 3D texture and raymarching.",
+                    active_example,
+                    device,
+                    sc_info.format);
+                AddExample<CornellPathtracerExample>(
+                    "cornell_pathtracer",
+                    "Cornell Pathtracer",
+                    "CPU-built Cornell box traced in compute RayQuery with history accumulation and tonemapping.",
                     active_example,
                     device,
                     sc_info.format);

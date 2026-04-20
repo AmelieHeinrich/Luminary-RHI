@@ -7,15 +7,13 @@
 ## Examples
 
 - Downsample/upsample bloom
-- GPU frustum culling
 - Pathtracer
 - Deferred shading
 - Global and local shadow maps
 - Raytraced shadows
 - Raytraced reflections
 - Volumetrics
-- Environment mapping
-- Mesh shaded isibility buffer
 - Hillaire sky
+- Mesh shaded visibility buffer + GPU frustum culling
 - Slug text rendering
 - Compute skinning

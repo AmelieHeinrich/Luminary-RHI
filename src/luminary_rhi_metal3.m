@@ -2591,6 +2591,7 @@ static void lrhi_metal3_acceleration_structure_pass_end(LRHIAccelerationStructur
     (void)out_error;
     LRHIAccelerationStructurePassMetal3* metal_as_pass = (LRHIAccelerationStructurePassMetal3*)as_pass;
     [metal_as_pass->as_encoder endEncoding];
+    metal_as_pass->as_encoder = nil;
     LRHI_FREE(metal_as_pass);
 }
 
