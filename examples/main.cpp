@@ -3,6 +3,7 @@
 #include "examples/compute_particles_example.h"
 #include "examples/hello_cube_example.h"
 #include "examples/hello_triangle_example.h"
+#include "examples/volumetrics_example.h"
 #include "imgui/imgui.h"
 
 #include "imgui/backends/imgui_impl_osx.h"
@@ -248,6 +249,13 @@ int main(void)
                     "compute_particles",
                     "Compute Particles",
                     "A 1,000,000-particle galaxy updated in compute and rendered as points.",
+                    active_example,
+                    device,
+                    sc_info.format);
+                AddExample<VolumetricsExample>(
+                    "volumetrics",
+                    "Volumetrics",
+                    "Simple volumetric clouds using a compute-generated Worley 3D texture and raymarching.",
                     active_example,
                     device,
                     sc_info.format);

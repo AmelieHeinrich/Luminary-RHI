@@ -5,10 +5,15 @@
 
 /// The type of handle used for swap chain creation. This is used when creating a swap chain, and determines how the swap chain will be created and what kind of windowing system it will use.
 typedef enum LRHISwapChainHandleType {
+    // HWND -> Works for D3D12/Vulkan
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_HWND,
+    // Metal Layer -> Works for Metal3/Metal4
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER,
+    // X11 -> Works for Vulkan
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_X11,
+    // Wayland -> Works for Vulkan
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_WAYLAND,
+    // XCB -> Works for Vulkan
     LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_XCB,
 } LRHISwapChainHandleType;
 
@@ -36,9 +41,13 @@ typedef enum LRHITextureFormat {
 } LRHITextureFormat;
 
 typedef enum LRHITextureUsage {
+    // Texture will be bound and read from shader
     LUMINARY_RHI_TEXTURE_USAGE_SAMPLED = 1 << 0,
+    // Texture will be bound and written from shader
     LUMINARY_RHI_TEXTURE_USAGE_STORAGE = 1 << 1,
+    // Texture will be used as a render target (i.e. output of a render pass)
     LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET = 1 << 2,
+    // Texture will be used as a depth/stencil buffer
     LUMINARY_RHI_TEXTURE_USAGE_DEPTH_STENCIL = 1 << 3,
 } LRHITextureUsage;
 
@@ -51,19 +60,29 @@ typedef enum LRHITextureDimensions {
 } LRHITextureDimensions;
 
 typedef enum LRHIBufferUsage {
+    // Buffer will be bound and read from vertex shader input (unused, please use vertex pulling instead)
     LUMINARY_RHI_BUFFER_USAGE_VERTEX = 1 << 0,
+    // Buffer will be bound and read from index shader input
     LUMINARY_RHI_BUFFER_USAGE_INDEX = 1 << 1,
+    // Buffer will be bound and read from constant buffer shader input (uniform buffer in Vulkan)
     LUMINARY_RHI_BUFFER_USAGE_CONSTANT = 1 << 2,
+    // Buffer will be bound and read from shader (e.g. StructuredBuffer<T>)
     LUMINARY_RHI_BUFFER_USAGE_SHADER_READ = 1 << 3,
+    // Buffer will be bound and written from shader (e.g. RWStructuredBuffer<T>)
     LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE = 1 << 4,
+    // Buffer will be used as an indirect command buffer (i.e. used for indirect draw/dispatch calls)
     LUMINARY_RHI_BUFFER_USAGE_INDIRECT_COMMANDS = 1 << 5,
+    // Buffer will be used for staging (i.e. upload/download to/from GPU). This is a hint to the implementation that the buffer will be used for staging, and may affect how the buffer is created and where it is placed in memory.
     LUMINARY_RHI_BUFFER_USAGE_STAGING = 1 << 6
 } LRHIBufferUsage;
 
 typedef enum LRHIRenderPassAction {
+    // Load existing contents of the render target (if any)
     LUMINARY_RHI_RENDER_PASS_ACTION_LOAD,
+    // Clear render target to a specified clear color at the beginning of the render pass
     LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR,
     LUMINARY_RHI_RENDER_PASS_ACTION_STORE = LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR, 
+    // Discard existing contents of the render target (if any) at the beginning of the render pass, and do not store results at the end of the render pass
     LUMINARY_RHI_RENDER_PASS_ACTION_DONT_CARE,
 } LRHIRenderPassAction;
 
@@ -676,22 +695,6 @@ void lrhi_acceleration_structure_pass_refit_tlas(LRHIAccelerationStructurePass p
 // Exact copy (no compaction) — dst must be the same size as src.
 void lrhi_acceleration_structure_pass_copy_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure src_blas, LRHIBottomLevelAccelerationStructure dst_blas, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_copy_tlas(LRHIAccelerationStructurePass pass, LRHITopLevelAccelerationStructure src_tlas, LRHITopLevelAccelerationStructure dst_tlas, LRHIError* out_error);
-
-/*
-    TODO:
-        Acceleration structure pass:
-            - create/destroy
-            - get info
-            - begin/end
-            - build (direct)
-            - copy
-            - compact
-
-        API SPECIFIC:
-            - Vulkan: do the entire backend lmao
-            - D3D12: same
-            - Switch & Playstation: get them devkits >.>
-*/
 
 #ifdef __cplusplus
 } // extern "C"
