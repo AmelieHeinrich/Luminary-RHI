@@ -1,9 +1,7 @@
-## Raytracing
+## Features
 
-- Procedural geometry
-- BLAS compaction
-- AS copy
-- AS refit
+- Heaps
+- Resource aliasing
 
 ## Examples
 
