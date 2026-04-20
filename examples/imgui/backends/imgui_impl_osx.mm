@@ -1165,7 +1165,11 @@ static void ImGui_ImplOSX_ShutdownMultiViewportSupport()
 
     ImGuiViewport* main_viewport = ImGui::GetMainViewport();
     ImGui_ImplOSX_ViewportData* vd = (ImGui_ImplOSX_ViewportData*)main_viewport->PlatformUserData;
-    IM_DELETE(vd);
+    if (vd)
+    {
+        vd->Window = nil;
+        IM_DELETE(vd);
+    }
     main_viewport->PlatformUserData = nullptr;
     ImGui::DestroyPlatformWindows();
 }

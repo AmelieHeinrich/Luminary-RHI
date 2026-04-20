@@ -54,7 +54,13 @@ MacOSWindow::MacOSWindow()
 
 void MacOSWindow::update_drawable_size() const
 {
+    if (!window || ![window isVisible])
+        return;
+
     NSView* contentView = window.contentView;
+    if (!contentView)
+        return;
+
     NSRect backingRect = [contentView convertRectToBacking:contentView.bounds];
     CGSize drawableSize = CGSizeMake(backingRect.size.width, backingRect.size.height);
     metal_layer.contentsScale = window.backingScaleFactor;
@@ -63,16 +69,25 @@ void MacOSWindow::update_drawable_size() const
 
 MacOSWindow::~MacOSWindow()
 {
-    [window close];
+    if (window) {
+        [window close];
+        window = nil;
+    }
 }
 
 bool MacOSWindow::should_close() const
 {
+    if (!window)
+        return true;
+
     return [window isVisible] == NO;
 }
 
 void MacOSWindow::poll_events()
 {
+    if (!window || ![window isVisible])
+        return;
+
     // Proper non-blocking event pump
     NSEvent* event;
     while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny
@@ -99,6 +114,12 @@ bool MacOSWindow::consume_escape_pressed()
 
 void MacOSWindow::get_width_and_height(int* width, int* height) const
 {
+    if (!window || ![window isVisible]) {
+        *width = 0;
+        *height = 0;
+        return;
+    }
+
     update_drawable_size();
     CGSize drawableSize = metal_layer.drawableSize;
     *width = static_cast<int>(drawableSize.width);

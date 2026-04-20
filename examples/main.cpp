@@ -186,6 +186,9 @@ int main(void)
             {
 #endif
             window->poll_events();
+            if (window->should_close())
+                break;
+
             window->get_width_and_height(&width, &height);
             if (width <= 0 || height <= 0)
                 continue;
