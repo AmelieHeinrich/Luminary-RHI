@@ -10,4 +10,4 @@ tests/output
 .claude
 diag
 
-*.DS_Store
+.DS_Store
