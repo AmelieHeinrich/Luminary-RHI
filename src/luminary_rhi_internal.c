@@ -1,13 +1,48 @@
 #include "luminary_rhi_internal.h"
 
 #include <stdlib.h>
+#include <string.h>
+
+static LRHIAllocator lrhi_global_allocator = { NULL, NULL, NULL };
+
+void lrhi_set_allocator(LRHIAllocator allocator)
+{
+    lrhi_global_allocator = allocator;
+}
+
+void* lrhi_alloc(size_t size)
+{
+    if (lrhi_global_allocator.alloc) {
+        return lrhi_global_allocator.alloc(size, lrhi_global_allocator.userdata);
+    }
+    return malloc(size);
+}
+
+void* lrhi_calloc(size_t count, size_t size)
+{
+    if (lrhi_global_allocator.alloc) {
+        void* ptr = lrhi_global_allocator.alloc(count * size, lrhi_global_allocator.userdata);
+        if (ptr) memset(ptr, 0, count * size);
+        return ptr;
+    }
+    return calloc(count, size);
+}
+
+void lrhi_free(void* ptr)
+{
+    if (lrhi_global_allocator.free) {
+        lrhi_global_allocator.free(ptr, lrhi_global_allocator.userdata);
+        return;
+    }
+    free(ptr);
+}
 
 void lrhi_freelist_init(LRHIFreeList* freelist, uint64_t max_slots)
 {
     freelist->max_slots = max_slots;
     freelist->bitmap_size = (max_slots + 63) / 64;
-    freelist->bitmap = (uint64_t*)calloc(freelist->bitmap_size, sizeof(uint64_t));
-    freelist->free_list = (uint32_t*)malloc(max_slots * sizeof(uint32_t));
+    freelist->bitmap = (uint64_t*)LRHI_CALLOC(freelist->bitmap_size, sizeof(uint64_t));
+    freelist->free_list = (uint32_t*)LRHI_MALLOC(max_slots * sizeof(uint32_t));
     for (uint64_t i = 0; i < max_slots; i++) {
         freelist->free_list[i] = (uint32_t)i;
     }
@@ -15,8 +50,8 @@ void lrhi_freelist_init(LRHIFreeList* freelist, uint64_t max_slots)
 
 void lrhi_freelist_destroy(LRHIFreeList* freelist)
 {
-    free(freelist->bitmap);
-    free(freelist->free_list);
+    LRHI_FREE(freelist->bitmap);
+    LRHI_FREE(freelist->free_list);
 }
 
 uint32_t lrhi_freelist_allocate(LRHIFreeList* freelist)

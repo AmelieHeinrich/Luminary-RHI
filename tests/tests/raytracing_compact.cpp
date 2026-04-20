@@ -175,6 +175,7 @@ public:
             lrhi_command_list_begin(cmd, &lerr);
             LRHIAccelerationStructurePass as_pass = lrhi_acceleration_structure_pass_begin(cmd, &lerr);
             lrhi_acceleration_structure_pass_build_blas(as_pass, _blas, _scratch_buffer, 0, &lerr);
+            lrhi_acceleration_structure_pass_barrier(as_pass, &lerr);
             lrhi_acceleration_structure_pass_write_compacted_blas_size(as_pass, _blas, _compact_size_buf, 0, &lerr);
             lrhi_acceleration_structure_pass_end(as_pass, &lerr);
             lrhi_command_list_end(cmd, &lerr);

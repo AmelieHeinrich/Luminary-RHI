@@ -198,6 +198,16 @@ void lrhi_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error)
     ((LRHICopyPassBase*)copy_pass)->vtable->copy_pass_end(copy_pass, out_error);
 }
 
+void lrhi_copy_pass_push_debug_group(LRHICopyPass copy_pass, const char* label, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->push_debug_group(copy_pass, label, out_error);
+}
+
+void lrhi_copy_pass_pop_debug_group(LRHICopyPass copy_pass, LRHIError* out_error)
+{
+    ((LRHICopyPassBase*)copy_pass)->vtable->pop_debug_group(copy_pass, out_error);
+}
+
 void lrhi_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error)
 {
     ((LRHICopyPassBase*)copy_pass)->vtable->copy_pass_intra_barrier(copy_pass, out_error);
@@ -331,6 +341,16 @@ LRHIRenderPass lrhi_render_pass_begin(LRHICommandList command_list, LRHIRenderPa
 void lrhi_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error)
 {
     ((LRHIRenderPassBase*)render_pass)->vtable->end(render_pass, out_error);
+}
+
+void lrhi_render_pass_push_debug_group(LRHIRenderPass render_pass, const char* label, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->push_debug_group(render_pass, label, out_error);
+}
+
+void lrhi_render_pass_pop_debug_group(LRHIRenderPass render_pass, LRHIError* out_error)
+{
+    ((LRHIRenderPassBase*)render_pass)->vtable->pop_debug_group(render_pass, out_error);
 }
 
 void lrhi_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
@@ -473,6 +493,16 @@ void lrhi_compute_pass_end(LRHIComputePass compute_pass, LRHIError* out_error)
     ((LRHIComputePassBase*)compute_pass)->vtable->end(compute_pass, out_error);
 }
 
+void lrhi_compute_pass_push_debug_group(LRHIComputePass compute_pass, const char* label, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->push_debug_group(compute_pass, label, out_error);
+}
+
+void lrhi_compute_pass_pop_debug_group(LRHIComputePass compute_pass, LRHIError* out_error)
+{
+    ((LRHIComputePassBase*)compute_pass)->vtable->pop_debug_group(compute_pass, out_error);
+}
+
 void lrhi_compute_pass_barrier(LRHIComputePass compute_pass, LRHIError* out_error)
 {
     ((LRHIComputePassBase*)compute_pass)->vtable->barrier(compute_pass, out_error);
@@ -571,6 +601,16 @@ LRHIAccelerationStructurePass lrhi_acceleration_structure_pass_begin(LRHICommand
 void lrhi_acceleration_structure_pass_end(LRHIAccelerationStructurePass pass, LRHIError* out_error)
 {
     ((LRHIAccelerationStructurePassBase*)pass)->vtable->end(pass, out_error);
+}
+
+void lrhi_acceleration_structure_pass_push_debug_group(LRHIAccelerationStructurePass pass, const char* label, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->push_debug_group(pass, label, out_error);
+}
+
+void lrhi_acceleration_structure_pass_pop_debug_group(LRHIAccelerationStructurePass pass, LRHIError* out_error)
+{
+    ((LRHIAccelerationStructurePassBase*)pass)->vtable->pop_debug_group(pass, out_error);
 }
 
 void lrhi_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass pass, LRHIError* out_error)

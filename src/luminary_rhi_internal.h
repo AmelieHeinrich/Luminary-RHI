@@ -73,6 +73,8 @@ typedef struct LRHICommandListVTable {
 
 typedef struct LRHICopyPassVTable {
     void (*copy_pass_end)(LRHICopyPass copy_pass, LRHIError* out_error);
+    void (*push_debug_group)(LRHICopyPass copy_pass, const char* label, LRHIError* out_error);
+    void (*pop_debug_group)(LRHICopyPass copy_pass, LRHIError* out_error);
     void (*copy_pass_intra_barrier)(LRHICopyPass copy_pass, LRHIError* out_error);
     void (*copy_pass_encoder_barrier)(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error);
     void (*copy_buffer_to_buffer)(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error);
@@ -108,6 +110,8 @@ typedef struct LRHITextureViewVTable {
 
 typedef struct LRHIRenderPassVTable {
     void (*end)(LRHIRenderPass render_pass, LRHIError* out_error);
+    void (*push_debug_group)(LRHIRenderPass render_pass, const char* label, LRHIError* out_error);
+    void (*pop_debug_group)(LRHIRenderPass render_pass, LRHIError* out_error);
     void (*intra_barrier)(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
     void (*encoder_barrier)(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
     void (*set_render_pipeline)(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error);
@@ -146,6 +150,8 @@ typedef struct LRHIComputePipelineVTable {
 
 typedef struct LRHIComputePassVTable {
     void (*end)(LRHIComputePass compute_pass, LRHIError* out_error);
+    void (*push_debug_group)(LRHIComputePass compute_pass, const char* label, LRHIError* out_error);
+    void (*pop_debug_group)(LRHIComputePass compute_pass, LRHIError* out_error);
     void (*barrier)(LRHIComputePass compute_pass, LRHIError* out_error);
     void (*encoder_barrier)(LRHIComputePass compute_pass, LRHIRenderStage after_stage, LRHIError* out_error);
     void (*set_pipeline)(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error);
@@ -168,6 +174,8 @@ typedef struct LRHISamplerVTable {
 
 typedef struct LRHIAccelerationStructurePassVTable {
     void (*end)(LRHIAccelerationStructurePass pass, LRHIError* out_error);
+    void (*push_debug_group)(LRHIAccelerationStructurePass pass, const char* label, LRHIError* out_error);
+    void (*pop_debug_group)(LRHIAccelerationStructurePass pass, LRHIError* out_error);
     void (*barrier)(LRHIAccelerationStructurePass pass, LRHIError* out_error);
     void (*encoder_barrier)(LRHIAccelerationStructurePass pass, LRHIRenderStage after_stage, LRHIError* out_error);
     void (*build_blas)(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
@@ -222,6 +230,15 @@ typedef struct LRHITLASBase                      { const LRHITLASVTable*        
 void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
 void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
 #endif
+
+// Allocator — backed by lrhi_set_allocator; falls back to malloc/calloc/free
+void* lrhi_alloc(size_t size);
+void* lrhi_calloc(size_t count, size_t size);
+void  lrhi_free(void* ptr);
+
+#define LRHI_MALLOC(sz)      lrhi_alloc(sz)
+#define LRHI_CALLOC(n, sz)   lrhi_calloc((n), (sz))
+#define LRHI_FREE(ptr)       lrhi_free(ptr)
 
 // Free list implementation for bindless manager
 typedef struct LRHIFreeList {

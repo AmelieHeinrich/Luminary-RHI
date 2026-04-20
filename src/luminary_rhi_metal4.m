@@ -318,6 +318,8 @@ static LRHICopyPass    lrhi_metal4_command_list_begin_copy_pass(LRHICommandList 
 static void            lrhi_metal4_command_list_prepare_indirect_commands(LRHICommandList command_list, LRHIBuffer indirect_command_buffer, LRHIBuffer count_buffer, uint64_t maxCommandCount, LRHIDrawIndirectParameters* parameters, LRHIRenderPipeline pipeline, const void* push_constants, uint32_t push_constant_size, LRHIError* out_error);
 
 static void            lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_push_debug_group(LRHICopyPass copy_pass, const char* label, LRHIError* out_error);
+static void            lrhi_metal4_copy_pass_pop_debug_group(LRHICopyPass copy_pass, LRHIError* out_error);
 static void            lrhi_metal4_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error);
 static void            lrhi_metal4_copy_pass_encoder_barrier(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal4_copy_pass_copy_texture_to_texture(LRHICopyPass copy_pass, LRHITexture src_texture, LRHIRegion src_region, uint32_t src_mip_level, uint32_t src_array_layer, LRHITexture dst_texture, LRHIRegion dst_region, uint32_t dst_mip_level, uint32_t dst_array_layer, LRHIError* out_error);
@@ -345,6 +347,8 @@ static uint32_t        lrhi_metal4_texture_view_get_bindless_index(LRHITextureVi
 
 static LRHIRenderPass  lrhi_metal4_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_push_debug_group(LRHIRenderPass render_pass, const char* label, LRHIError* out_error);
+static void            lrhi_metal4_render_pass_pop_debug_group(LRHIRenderPass render_pass, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error);
 static void            lrhi_metal4_render_pass_set_viewport(LRHIRenderPass render_pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, float min_depth, float max_depth, LRHIError* out_error);
@@ -379,6 +383,8 @@ static uint64_t        lrhi_metal4_compute_pipeline_get_alloc_size(LRHIComputePi
 
 static LRHIComputePass lrhi_metal4_compute_pass_begin(LRHICommandList command_list, LRHIError* out_error);
 static void            lrhi_metal4_compute_pass_end(LRHIComputePass compute_pass, LRHIError* out_error);
+static void            lrhi_metal4_compute_pass_push_debug_group(LRHIComputePass compute_pass, const char* label, LRHIError* out_error);
+static void            lrhi_metal4_compute_pass_pop_debug_group(LRHIComputePass compute_pass, LRHIError* out_error);
 static void            lrhi_metal4_compute_pass_barrier(LRHIComputePass compute_pass, LRHIError* out_error);
 static void            lrhi_metal4_compute_pass_encoder_barrier(LRHIComputePass compute_pass, LRHIRenderStage after_stage, LRHIError* out_error);
 static void            lrhi_metal4_compute_pass_set_push_constants(LRHIComputePass compute_pass, const void* data, uint32_t size, LRHIError* out_error);
@@ -403,6 +409,8 @@ static void            lrhi_metal4_residency_set_remove_tlas(LRHIResidencySet re
 
 static LRHIAccelerationStructurePass lrhi_metal4_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error);
 static void                          lrhi_metal4_acceleration_structure_pass_end(LRHIAccelerationStructurePass as_pass, LRHIError* out_error);
+static void                          lrhi_metal4_acceleration_structure_pass_push_debug_group(LRHIAccelerationStructurePass pass, const char* label, LRHIError* out_error);
+static void                          lrhi_metal4_acceleration_structure_pass_pop_debug_group(LRHIAccelerationStructurePass pass, LRHIError* out_error);
 static void                          lrhi_metal4_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass as_pass, LRHIError* out_error);
 static void                          lrhi_metal4_acceleration_structure_pass_encoder_barrier(LRHIAccelerationStructurePass as_pass, LRHIRenderStage after_stage, LRHIError* out_error);
 static void                          lrhi_metal4_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);
@@ -499,7 +507,9 @@ static const LRHICommandListVTable lrhi_metal4_command_list_vtable = {
 };
 
 static const LRHICopyPassVTable lrhi_metal4_copy_pass_vtable = {
-    .copy_pass_end = lrhi_metal4_copy_pass_end,
+    .copy_pass_end    = lrhi_metal4_copy_pass_end,
+    .push_debug_group = lrhi_metal4_copy_pass_push_debug_group,
+    .pop_debug_group  = lrhi_metal4_copy_pass_pop_debug_group,
     .copy_pass_intra_barrier = lrhi_metal4_copy_pass_intra_barrier,
     .copy_pass_encoder_barrier = lrhi_metal4_copy_pass_encoder_barrier,
     .copy_texture_to_texture = lrhi_metal4_copy_pass_copy_texture_to_texture,
@@ -544,6 +554,8 @@ static const LRHISwapChainVTable lrhi_metal4_swap_chain_vtable = {
 
 static const LRHIRenderPassVTable lrhi_metal4_render_pass_vtable = {
     .end = lrhi_metal4_render_pass_end,
+    .push_debug_group = lrhi_metal4_render_pass_push_debug_group,
+    .pop_debug_group  = lrhi_metal4_render_pass_pop_debug_group,
     .intra_barrier = lrhi_metal4_render_pass_intra_barrier,
     .encoder_barrier = lrhi_metal4_render_pass_encoder_barrier,
     .set_viewport = lrhi_metal4_render_pass_set_viewport,
@@ -582,6 +594,8 @@ static const LRHIComputePipelineVTable lrhi_metal4_compute_pipeline_vtable = {
 
 static const LRHIComputePassVTable lrhi_metal4_compute_pass_vtable = {
     .end = lrhi_metal4_compute_pass_end,
+    .push_debug_group = lrhi_metal4_compute_pass_push_debug_group,
+    .pop_debug_group  = lrhi_metal4_compute_pass_pop_debug_group,
     .barrier = lrhi_metal4_compute_pass_barrier,
     .encoder_barrier = lrhi_metal4_compute_pass_encoder_barrier,
     .set_push_constants = lrhi_metal4_compute_pass_set_push_constants,
@@ -619,6 +633,8 @@ static const LRHITLASVTable lrhi_metal4_tlas_vtable = {
 
 static const LRHIAccelerationStructurePassVTable lrhi_metal4_acceleration_structure_pass_vtable = {
     .end                       = lrhi_metal4_acceleration_structure_pass_end,
+    .push_debug_group          = lrhi_metal4_acceleration_structure_pass_push_debug_group,
+    .pop_debug_group           = lrhi_metal4_acceleration_structure_pass_pop_debug_group,
     .barrier                   = lrhi_metal4_acceleration_structure_pass_barrier,
     .encoder_barrier           = lrhi_metal4_acceleration_structure_pass_encoder_barrier,
     .build_blas                = lrhi_metal4_acceleration_structure_pass_build_blas,
@@ -715,12 +731,12 @@ static void lrhi_metal4_bindless_manager_free_sampler(Metal4BindlessManager* man
 
 void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error)
 {
-    LRHIDeviceMetal4* device = malloc(sizeof(LRHIDeviceMetal4));
+    LRHIDeviceMetal4* device = LRHI_MALLOC(sizeof(LRHIDeviceMetal4));
     device->base.vtable = &lrhi_metal4_device_vtable;
     device->device = MTLCreateSystemDefaultDevice();
     device->enable_debug = enable_debug;
     if ([device->device supportsFamily:MTLGPUFamilyMetal4] == NO) {
-        free(device);
+        LRHI_FREE(device);
         if (out_error) {
             snprintf(out_error->message, sizeof(out_error->message), "Metal 4 is not supported on this device");
             out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
@@ -735,7 +751,7 @@ void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
     NSError* pool_error = nil;
     device->texture_view_pool = [device->device newTextureViewPoolWithDescriptor:resource_view_pool_desc error:&pool_error];
     if (pool_error) {
-        free(device);
+        LRHI_FREE(device);
         if (out_error) {
             snprintf(out_error->message, sizeof(out_error->message), "Failed to create texture view pool: %s", pool_error.localizedDescription.UTF8String);
             out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
@@ -755,7 +771,7 @@ void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
             snprintf(out_error->message, sizeof(out_error->message), "Failed to create internal residency set");
             out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
         }
-        free(device); *out_device = NULL; return;
+        LRHI_FREE(device); *out_device = NULL; return;
     }
     [device->internal_residency_set addAllocation:device->bindless_manager.resource_heap_buffer];
     [device->internal_residency_set addAllocation:device->bindless_manager.sampler_heap_buffer];
@@ -774,7 +790,7 @@ void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
                          _icb_err ? _icb_err.localizedDescription.UTF8String : "unknown"); \
                 out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR; \
             } \
-            free(device); *out_device = NULL; return; \
+            LRHI_FREE(device); *out_device = NULL; return; \
         } \
         id<MTLFunction> _fn = [_lib newFunctionWithName:@fn_name]; \
         device->dst_field = [device->device newComputePipelineStateWithFunction:_fn error:&_icb_err]; \
@@ -785,7 +801,7 @@ void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
                          _icb_err ? _icb_err.localizedDescription.UTF8String : "unknown"); \
                 out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR; \
             } \
-            free(device); *out_device = NULL; return; \
+            LRHI_FREE(device); *out_device = NULL; return; \
         } \
     } while(0)
 
@@ -814,7 +830,7 @@ static void lrhi_metal4_destroy_device(LRHIDevice device)
     d->draw_mesh_tasks_icb_pipe  = nil;
     d->reset_render_icb_pipe     = nil;
     d->reset_compute_icb_pipe    = nil;
-    free(device);
+    LRHI_FREE(device);
 }
 
 static LRHIDeviceInfo lrhi_metal4_get_device_info(LRHIDevice device)
@@ -868,7 +884,9 @@ static void lrhi_metal4_create_texture(LRHIDevice device, LRHITextureInfo* info,
         return;
     }
 
-    LRHITextureMetal4* out = malloc(sizeof(LRHITextureMetal4));
+    if (info->name) { texture.label = [NSString stringWithUTF8String:info->name]; }
+
+    LRHITextureMetal4* out = LRHI_MALLOC(sizeof(LRHITextureMetal4));
     out->base.vtable = &lrhi_metal4_texture_vtable;
     out->texture = texture;
     out->info = *info;
@@ -879,7 +897,7 @@ static void lrhi_metal4_destroy_texture(LRHITexture texture)
 {
     LRHITextureMetal4* t = (LRHITextureMetal4*)texture;
     t->texture = nil;
-    free(texture);
+    LRHI_FREE(texture);
 }
 
 static void lrhi_metal4_get_texture_info(LRHITexture texture, LRHITextureInfo* out_info)
@@ -933,7 +951,9 @@ static void lrhi_metal4_create_buffer(LRHIDevice device, LRHIBufferInfo* info, L
         return;
     }
 
-    LRHIBufferMetal4* out = malloc(sizeof(LRHIBufferMetal4));
+    if (info->name) { buffer.label = [NSString stringWithUTF8String:info->name]; }
+
+    LRHIBufferMetal4* out = LRHI_MALLOC(sizeof(LRHIBufferMetal4));
     out->base.vtable = &lrhi_metal4_buffer_vtable;
     out->buffer = buffer;
     out->info = *info;
@@ -949,7 +969,7 @@ static void lrhi_metal4_destroy_buffer(LRHIBuffer buffer)
     metal_buffer->per_draw_constants = nil;
     metal_buffer->primitive_type_buf = nil;
     metal_buffer->icb_capacity_buf  = nil;
-    free(buffer);
+    LRHI_FREE(buffer);
 }
 
 static void lrhi_metal4_buffer_set_indirect_command_type(LRHIBuffer buffer, LRHICommandType command_type, LRHIError* out_error)
@@ -1084,7 +1104,7 @@ static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue
 
     [base_queue addResidencySet:metal_device->internal_residency_set];
 
-    LRHICommandQueueMetal4* out = malloc(sizeof(LRHICommandQueueMetal4));
+    LRHICommandQueueMetal4* out = LRHI_MALLOC(sizeof(LRHICommandQueueMetal4));
     out->base.vtable = &lrhi_metal4_command_queue_vtable;
     out->queue = base_queue;
     out->device = metal_device->device;
@@ -1108,7 +1128,7 @@ static void lrhi_metal4_destroy_command_queue(LRHICommandQueue queue)
     LRHICommandQueueMetal4* q = (LRHICommandQueueMetal4*)queue;
     q->queue   = nil;
     q->device  = nil;
-    free(q);
+    LRHI_FREE(q);
 }
 
 static void lrhi_metal4_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error)
@@ -1180,7 +1200,7 @@ static void lrhi_metal4_create_fence(LRHIDevice device, uint64_t initial_value, 
 
     event.signaledValue = initial_value;
 
-    LRHIFenceMetal4* out = malloc(sizeof(LRHIFenceMetal4));
+    LRHIFenceMetal4* out = LRHI_MALLOC(sizeof(LRHIFenceMetal4));
     out->base.vtable = &lrhi_metal4_fence_vtable;
     out->event = event;
     *out_fence = (LRHIFence)out;
@@ -1190,7 +1210,7 @@ static void lrhi_metal4_destroy_fence(LRHIFence fence)
 {
     LRHIFenceMetal4* f = (LRHIFenceMetal4*)fence;
     f->event = nil;
-    free(f);
+    LRHI_FREE(f);
 }
 
 static uint64_t lrhi_metal4_fence_get_value(LRHIFence fence)
@@ -1243,7 +1263,7 @@ static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandL
         return;
     }
 
-    LRHICommandListMetal4* out = malloc(sizeof(LRHICommandListMetal4));
+    LRHICommandListMetal4* out = LRHI_MALLOC(sizeof(LRHICommandListMetal4));
     out->base.vtable = &lrhi_metal4_command_list_vtable;
     out->command_allocator = command_allocator;
     out->command_buffer = command_buffer;
@@ -1273,7 +1293,7 @@ static void lrhi_metal4_destroy_command_list(LRHICommandList command_list)
     cmd->render_argument_table  = nil;
     cmd->compute_argument_table = nil;
     cmd->push_constant_buffer  = nil;
-    free(cmd);
+    LRHI_FREE(cmd);
 }
 
 static void lrhi_metal4_command_list_begin(LRHICommandList command_list, LRHIError* out_error)
@@ -1312,7 +1332,7 @@ static LRHICopyPass lrhi_metal4_command_list_begin_copy_pass(LRHICommandList com
         return NULL;
     }
 
-    LRHICopyPassMetal4* copy_pass = malloc(sizeof(LRHICopyPassMetal4));
+    LRHICopyPassMetal4* copy_pass = LRHI_MALLOC(sizeof(LRHICopyPassMetal4));
     copy_pass->base.vtable = &lrhi_metal4_copy_pass_vtable;
     copy_pass->blit_encoder = blit_encoder;
     return (LRHICopyPass)copy_pass;
@@ -1449,7 +1469,21 @@ static void lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_err
     LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
     [metal_copy_pass->blit_encoder endEncoding];
     metal_copy_pass->blit_encoder = nil;
-    free(metal_copy_pass);
+    LRHI_FREE(metal_copy_pass);
+}
+
+static void lrhi_metal4_copy_pass_push_debug_group(LRHICopyPass copy_pass, const char* label, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    [metal_copy_pass->blit_encoder pushDebugGroup:[NSString stringWithUTF8String:label]];
+}
+
+static void lrhi_metal4_copy_pass_pop_debug_group(LRHICopyPass copy_pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
+    [metal_copy_pass->blit_encoder popDebugGroup];
 }
 
 static void lrhi_metal4_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error)
@@ -1530,7 +1564,7 @@ static void lrhi_metal4_create_residency_set(LRHIDevice device, LRHIResidencySet
         return;
     }
 
-    LRHIResidencySetMetal4* out = malloc(sizeof(LRHIResidencySetMetal4));
+    LRHIResidencySetMetal4* out = LRHI_MALLOC(sizeof(LRHIResidencySetMetal4));
     out->base.vtable = &lrhi_metal4_residency_set_vtable;
     out->residency_set = residency_set;
     *out_residency_set = (LRHIResidencySet)out;
@@ -1540,7 +1574,7 @@ static void lrhi_metal4_destroy_residency_set(LRHIResidencySet residency_set)
 {
     LRHIResidencySetMetal4* rs = (LRHIResidencySetMetal4*)residency_set;
     rs->residency_set = nil;
-    free(rs);
+    LRHI_FREE(rs);
 }
 
 static void lrhi_metal4_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
@@ -1602,7 +1636,7 @@ static void lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewIn
     }
 
     // Create the view
-    LRHITextureViewMetal4* out = malloc(sizeof(LRHITextureViewMetal4));
+    LRHITextureViewMetal4* out = LRHI_MALLOC(sizeof(LRHITextureViewMetal4));
     out->base.vtable = &lrhi_metal4_texture_view_vtable;
     out->info = *info;
     out->bindless_index = UINT32_MAX; // TODO: Implement bindless resource indexing
@@ -1656,7 +1690,7 @@ static void lrhi_metal4_create_texture_view(LRHIDevice device, LRHITextureViewIn
         out->texture_view = metal_texture->texture;
     }
     if (!out->texture_view && out->bindless_index == UINT32_MAX) {
-        free(out);
+        LRHI_FREE(out);
         if (out_error) {
             snprintf(out_error->message, sizeof(out_error->message), "Failed to create texture view");
             out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
@@ -1675,7 +1709,7 @@ static void lrhi_metal4_destroy_texture_view(LRHITextureView texture_view)
         lrhi_metal4_bindless_manager_free_resource_view(metal_texture_view->bindless_manager, metal_texture_view->bindless_index);
     }
     metal_texture_view->texture_view = nil;
-    free(texture_view);
+    LRHI_FREE(texture_view);
 }
 
 static void lrhi_metal4_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info)
@@ -1739,7 +1773,7 @@ static LRHIRenderPass lrhi_metal4_render_pass_begin(LRHICommandList command_list
         return NULL;
     }
 
-    LRHIRenderPassMetal4* render_pass = calloc(1, sizeof(LRHIRenderPassMetal4));
+    LRHIRenderPassMetal4* render_pass = LRHI_CALLOC(1, sizeof(LRHIRenderPassMetal4));
     render_pass->base.vtable = &lrhi_metal4_render_pass_vtable;
     render_pass->render_encoder = render_encoder;
     render_pass->command_list = metal_cmd_list;
@@ -1755,7 +1789,21 @@ static void lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, LRHIError* o
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
     [metal_render_pass->render_encoder endEncoding];
     metal_render_pass->render_encoder = nil;
-    free(metal_render_pass);
+    LRHI_FREE(metal_render_pass);
+}
+
+static void lrhi_metal4_render_pass_push_debug_group(LRHIRenderPass render_pass, const char* label, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    [metal_render_pass->render_encoder pushDebugGroup:[NSString stringWithUTF8String:label]];
+}
+
+static void lrhi_metal4_render_pass_pop_debug_group(LRHIRenderPass render_pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
+    [metal_render_pass->render_encoder popDebugGroup];
 }
 
 static void lrhi_metal4_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage beforeStage, LRHIRenderStage afterStage, LRHIError* out_error)
@@ -2000,7 +2048,12 @@ static void lrhi_metal4_create_shader_module(LRHIDevice device, LRHIShaderModule
         return;
     }
 
-    LRHIShaderModuleMetal4* out = malloc(sizeof(LRHIShaderModuleMetal4));
+    if (info->name) {
+        library.label  = [NSString stringWithUTF8String:info->name];
+        function.label = [NSString stringWithUTF8String:info->name];
+    }
+
+    LRHIShaderModuleMetal4* out = LRHI_MALLOC(sizeof(LRHIShaderModuleMetal4));
     out->base.vtable = &lrhi_metal4_shader_module_vtable;
     out->library = library;
     out->function = function;
@@ -2013,7 +2066,7 @@ static void lrhi_metal4_destroy_shader_module(LRHIShaderModule shader_module)
     LRHIShaderModuleMetal4* m = (LRHIShaderModuleMetal4*)shader_module;
     m->library  = nil;
     m->function = nil;
-    free(shader_module);
+    LRHI_FREE(shader_module);
 }
 
 static void lrhi_metal4_get_shader_module_info(LRHIShaderModule shader_module, LRHIShaderModuleInfo* out_info)
@@ -2070,6 +2123,8 @@ static void lrhi_metal4_create_render_pipeline(LRHIDevice device, LRHIRenderPipe
         depth_stencil_state = [metal_device->device newDepthStencilStateWithDescriptor:depth_stencil_descriptor];
     }
 
+    if (info->name) { descriptor.label = [NSString stringWithUTF8String:info->name]; }
+
     NSError* error = nil;
     id<MTLRenderPipelineState> pipeline_state = [metal_device->device newRenderPipelineStateWithDescriptor:descriptor error:&error];
     if (!pipeline_state || error) {
@@ -2081,7 +2136,7 @@ static void lrhi_metal4_create_render_pipeline(LRHIDevice device, LRHIRenderPipe
         return;
     }
 
-    LRHIRenderPipelineMetal4* out = malloc(sizeof(LRHIRenderPipelineMetal4));
+    LRHIRenderPipelineMetal4* out = LRHI_MALLOC(sizeof(LRHIRenderPipelineMetal4));
     out->base.vtable = &lrhi_metal4_render_pipeline_vtable;
     out->pipeline_state = pipeline_state;
     out->depth_stencil_state = depth_stencil_state;
@@ -2095,7 +2150,7 @@ static void lrhi_metal4_destroy_render_pipeline(LRHIRenderPipeline pipeline)
     LRHIRenderPipelineMetal4* p = (LRHIRenderPipelineMetal4*)pipeline;
     p->pipeline_state     = nil;
     p->depth_stencil_state = nil;
-    free(pipeline);
+    LRHI_FREE(pipeline);
 }
 
 static void lrhi_metal4_get_render_pipeline_info(LRHIRenderPipeline pipeline, LRHIRenderPipelineInfo* out_info)
@@ -2146,6 +2201,8 @@ static void lrhi_metal4_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipeline
         depth_stencil_state = [metal_device->device newDepthStencilStateWithDescriptor:depth_stencil_descriptor];
     }
 
+    if (info->name) { descriptor.label = [NSString stringWithUTF8String:info->name]; }
+
     NSError* error = nil;
     id<MTLRenderPipelineState> pipeline_state = [metal_device->device newRenderPipelineStateWithMeshDescriptor:descriptor options:MTLPipelineOptionNone reflection:nil error:&error];
     if (!pipeline_state || error) {
@@ -2157,7 +2214,7 @@ static void lrhi_metal4_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipeline
         return;
     }
 
-    LRHIMeshPipelineMetal4* out = malloc(sizeof(LRHIMeshPipelineMetal4));
+    LRHIMeshPipelineMetal4* out = LRHI_MALLOC(sizeof(LRHIMeshPipelineMetal4));
     out->base.vtable = &lrhi_metal4_mesh_pipeline_vtable;
     out->pipeline_state = pipeline_state;
     out->depth_stencil_state = depth_stencil_state;
@@ -2171,7 +2228,7 @@ static void lrhi_metal4_destroy_mesh_pipeline(LRHIMeshPipeline pipeline)
     LRHIMeshPipelineMetal4* p = (LRHIMeshPipelineMetal4*)pipeline;
     p->pipeline_state     = nil;
     p->depth_stencil_state = nil;
-    free(pipeline);
+    LRHI_FREE(pipeline);
 }
 
 static void lrhi_metal4_get_mesh_pipeline_info(LRHIMeshPipeline pipeline, LRHIMeshPipelineInfo* out_info)
@@ -2198,6 +2255,8 @@ static void lrhi_metal4_create_compute_pipeline(LRHIDevice device, LRHIComputePi
         descriptor.supportIndirectCommandBuffers = YES;
     }
 
+    if (info->name) { descriptor.label = [NSString stringWithUTF8String:info->name]; }
+
     NSError* error = nil;
     id<MTLComputePipelineState> pipeline_state = [metal_device->device newComputePipelineStateWithDescriptor:descriptor options:MTLPipelineOptionNone reflection:nil error:&error];
     if (!pipeline_state || error) {
@@ -2209,7 +2268,7 @@ static void lrhi_metal4_create_compute_pipeline(LRHIDevice device, LRHIComputePi
         return;
     }
 
-    LRHIComputePipelineMetal4* out = malloc(sizeof(LRHIComputePipelineMetal4));
+    LRHIComputePipelineMetal4* out = LRHI_MALLOC(sizeof(LRHIComputePipelineMetal4));
     out->base.vtable = &lrhi_metal4_compute_pipeline_vtable;
     out->pipeline_state = pipeline_state;
     out->info = *info;
@@ -2221,7 +2280,7 @@ static void lrhi_metal4_destroy_compute_pipeline(LRHIComputePipeline pipeline)
 {
     LRHIComputePipelineMetal4* p = (LRHIComputePipelineMetal4*)pipeline;
     p->pipeline_state = nil;
-    free(pipeline);
+    LRHI_FREE(pipeline);
 }
 
 static void lrhi_metal4_get_compute_pipeline_info(LRHIComputePipeline pipeline, LRHIComputePipelineInfo* out_info)
@@ -2251,7 +2310,7 @@ static LRHIComputePass lrhi_metal4_compute_pass_begin(LRHICommandList command_li
         return NULL;
     }
 
-    LRHIComputePassMetal4* compute_pass = calloc(1, sizeof(LRHIComputePassMetal4));
+    LRHIComputePassMetal4* compute_pass = LRHI_CALLOC(1, sizeof(LRHIComputePassMetal4));
     compute_pass->base.vtable = &lrhi_metal4_compute_pass_vtable;
     compute_pass->compute_encoder = compute_encoder;
     compute_pass->command_list = metal_cmd_list;
@@ -2267,7 +2326,21 @@ static void lrhi_metal4_compute_pass_end(LRHIComputePass compute_pass, LRHIError
     LRHIComputePassMetal4* metal_compute_pass = (LRHIComputePassMetal4*)compute_pass;
     [metal_compute_pass->compute_encoder endEncoding];
     metal_compute_pass->compute_encoder = nil;
-    free(metal_compute_pass);
+    LRHI_FREE(metal_compute_pass);
+}
+
+static void lrhi_metal4_compute_pass_push_debug_group(LRHIComputePass compute_pass, const char* label, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIComputePassMetal4* metal_compute_pass = (LRHIComputePassMetal4*)compute_pass;
+    [metal_compute_pass->compute_encoder pushDebugGroup:[NSString stringWithUTF8String:label]];
+}
+
+static void lrhi_metal4_compute_pass_pop_debug_group(LRHIComputePass compute_pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIComputePassMetal4* metal_compute_pass = (LRHIComputePassMetal4*)compute_pass;
+    [metal_compute_pass->compute_encoder popDebugGroup];
 }
 
 static void lrhi_metal4_compute_pass_barrier(LRHIComputePass compute_pass, LRHIError* out_error)
@@ -2355,7 +2428,7 @@ static void lrhi_metal4_create_swap_chain(LRHIDevice device, LRHICommandQueue qu
     layer.framebufferOnly      = NO;
     layer.maximumDrawableCount = (max_fif <= 3) ? max_fif : 3;  // CAMetalLayer caps at 3
 
-    LRHISwapChainMetal4* sc = malloc(sizeof(LRHISwapChainMetal4));
+    LRHISwapChainMetal4* sc = LRHI_MALLOC(sizeof(LRHISwapChainMetal4));
     sc->base.vtable      = &lrhi_metal4_swap_chain_vtable;
     sc->layer            = layer;
     sc->queue            = metal_queue->queue;
@@ -2382,7 +2455,7 @@ static void lrhi_metal4_destroy_swap_chain(LRHISwapChain swap_chain)
 {
     LRHISwapChainMetal4* sc = (LRHISwapChainMetal4*)swap_chain;
     sc->current_drawable = nil;
-    free(sc);
+    LRHI_FREE(sc);
 }
 
 static LRHITexture lrhi_metal4_swap_chain_get_current_texture(LRHISwapChain swap_chain,
@@ -2452,7 +2525,7 @@ static void lrhi_metal4_create_buffer_view(LRHIDevice device, LRHIBufferViewInfo
         return;
     }
 
-    LRHIBufferViewMetal4* out = malloc(sizeof(LRHIBufferViewMetal4));
+    LRHIBufferViewMetal4* out = LRHI_MALLOC(sizeof(LRHIBufferViewMetal4));
     out->base.vtable = &lrhi_metal4_buffer_view_vtable;
     out->gpu_address = metal_buffer->buffer.gpuAddress + info->offset;
     out->info = *info;
@@ -2468,7 +2541,7 @@ static void lrhi_metal4_destroy_buffer_view(LRHIBufferView buffer_view)
     if (metal_buffer_view->bindless_index != UINT32_MAX) {
         lrhi_metal4_bindless_manager_free_resource_view(metal_buffer_view->bindless_manager, metal_buffer_view->bindless_index);
     }
-    free(buffer_view);
+    LRHI_FREE(buffer_view);
 }
 
 static void lrhi_metal4_get_buffer_view_info(LRHIBufferView buffer_view, LRHIBufferViewInfo* out_info)
@@ -2510,8 +2583,9 @@ static void lrhi_metal4_create_sampler(LRHIDevice device, LRHISamplerInfo* info,
         descriptor.compareFunction = lrhi_metal4_compare_op_to_mtl(info->compare_op);
     }
     descriptor.supportArgumentBuffers = YES;
+    if (info->name) { descriptor.label = [NSString stringWithUTF8String:info->name]; }
 
-    LRHISamplerMetal4* out = malloc(sizeof(LRHISamplerMetal4));
+    LRHISamplerMetal4* out = LRHI_MALLOC(sizeof(LRHISamplerMetal4));
     out->base.vtable = &lrhi_metal4_sampler_vtable;
     out->info = *info;
     out->sampler_state = [metal_device->device newSamplerStateWithDescriptor:descriptor];
@@ -2525,7 +2599,7 @@ static void lrhi_metal4_destroy_sampler(LRHISampler sampler)
 {
     LRHISamplerMetal4* metal_sampler = (LRHISamplerMetal4*)sampler;
     lrhi_metal4_bindless_manager_free_sampler(metal_sampler->bindless_manager, metal_sampler->bindless_index);
-    free(sampler);
+    LRHI_FREE(sampler);
 }
 
 static void lrhi_metal4_get_sampler_info(LRHISampler sampler, LRHISamplerInfo* out_info)
@@ -2871,7 +2945,7 @@ static LRHIAccelerationStructurePass lrhi_metal4_acceleration_structure_pass_beg
 {
     LRHICommandListMetal4* metal_command_list = (LRHICommandListMetal4*)command_list;
 
-    LRHIAccelerationStructurePassMetal4* as_pass = malloc(sizeof(LRHIAccelerationStructurePassMetal4));
+    LRHIAccelerationStructurePassMetal4* as_pass = LRHI_MALLOC(sizeof(LRHIAccelerationStructurePassMetal4));
     as_pass->base.vtable = &lrhi_metal4_acceleration_structure_pass_vtable;
     as_pass->command_list = (LRHICommandListMetal4*)command_list;
     as_pass->as_encoder = [metal_command_list->command_buffer computeCommandEncoder];
@@ -2883,7 +2957,21 @@ static void lrhi_metal4_acceleration_structure_pass_end(LRHIAccelerationStructur
     LRHIAccelerationStructurePassMetal4* metal_as_pass = (LRHIAccelerationStructurePassMetal4*)as_pass;
     [metal_as_pass->as_encoder endEncoding];
     metal_as_pass->as_encoder = nil;
-    free(as_pass);
+    LRHI_FREE(as_pass);
+}
+
+static void lrhi_metal4_acceleration_structure_pass_push_debug_group(LRHIAccelerationStructurePass pass, const char* label, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIAccelerationStructurePassMetal4* metal_as_pass = (LRHIAccelerationStructurePassMetal4*)pass;
+    [metal_as_pass->as_encoder pushDebugGroup:[NSString stringWithUTF8String:label]];
+}
+
+static void lrhi_metal4_acceleration_structure_pass_pop_debug_group(LRHIAccelerationStructurePass pass, LRHIError* out_error)
+{
+    (void)out_error;
+    LRHIAccelerationStructurePassMetal4* metal_as_pass = (LRHIAccelerationStructurePassMetal4*)pass;
+    [metal_as_pass->as_encoder popDebugGroup];
 }
 
 static void lrhi_metal4_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass as_pass, LRHIError* out_error)
@@ -3016,12 +3104,15 @@ static void lrhi_metal4_create_bottom_level_acceleration_structure(LRHIDevice de
     
     LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
 
-    LRHIBLASMetal4* out = malloc(sizeof(LRHIBLASMetal4));
+    LRHIBLASMetal4* out = LRHI_MALLOC(sizeof(LRHIBLASMetal4));
     out->base.vtable = &lrhi_metal4_blas_vtable;
     out->info = *info;
     out->device = metal_device;
     out->sizes = [metal_device->device accelerationStructureSizesWithDescriptor:as_desc];
     out->acceleration_structure = [metal_device->device newAccelerationStructureWithSize:out->sizes.accelerationStructureSize];
+    if (info->name) {
+        out->acceleration_structure.label = [NSString stringWithUTF8String:info->name];
+    }
     out->mtl_descriptor = as_desc;
     *out_blas = (LRHIBottomLevelAccelerationStructure)out;
 }
@@ -3029,10 +3120,13 @@ static void lrhi_metal4_create_bottom_level_acceleration_structure(LRHIDevice de
 static void lrhi_metal4_create_compacted_bottom_level_acceleration_structure(LRHIDevice device, uint64_t compacted_size, LRHIBottomLevelAccelerationStructure* out_blas, LRHIError* out_error)
 {
     LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
-    LRHIBLASMetal4* out = malloc(sizeof(LRHIBLASMetal4));
+    LRHIBLASMetal4* out = LRHI_MALLOC(sizeof(LRHIBLASMetal4));
     out->base.vtable           = &lrhi_metal4_blas_vtable;
     out->device                = metal_device;
     out->acceleration_structure = [metal_device->device newAccelerationStructureWithSize:compacted_size];
+    if (out->acceleration_structure) {
+        out->acceleration_structure.label = [NSString stringWithFormat:@"%p (compacted)", (void*)out];
+    }
     out->mtl_descriptor        = nil;
     out->sizes                 = (MTLAccelerationStructureSizes){0};
     memset(&out->info, 0, sizeof(LRHIBLASInfo));
@@ -3043,7 +3137,7 @@ static void lrhi_metal4_destroy_bottom_level_acceleration_structure(LRHIBottomLe
 {
     LRHIBLASMetal4* metal_blas = (LRHIBLASMetal4*)blas;
     metal_blas->acceleration_structure = nil;
-    free(blas);
+    LRHI_FREE(blas);
 }
 
 static void lrhi_metal4_get_bottom_level_acceleration_structure_info(LRHIBottomLevelAccelerationStructure blas, LRHIBLASInfo* out_info)
@@ -3070,7 +3164,7 @@ static void lrhi_metal4_create_top_level_acceleration_structure(LRHIDevice devic
     as_desc.usage = MTLAccelerationStructureUsagePreferFastIntersection;
     
     LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
-    LRHITLASMetal4* out = malloc(sizeof(LRHITLASMetal4));
+    LRHITLASMetal4* out = LRHI_MALLOC(sizeof(LRHITLASMetal4));
 
     // Create buffers
     out->instance_buffer = [metal_device->device newBufferWithLength:sizeof(MTLIndirectAccelerationStructureInstanceDescriptor) * info->max_instance_count options:MTLResourceStorageModeShared];
@@ -3087,6 +3181,9 @@ static void lrhi_metal4_create_top_level_acceleration_structure(LRHIDevice devic
     out->device = metal_device;
     out->sizes = [metal_device->device accelerationStructureSizesWithDescriptor:as_desc];
     out->acceleration_structure = [metal_device->device newAccelerationStructureWithSize:out->sizes.accelerationStructureSize];
+    if (info->name) {
+        out->acceleration_structure.label = [NSString stringWithUTF8String:info->name];
+    }
     MTLResourceID resource_id = out->acceleration_structure.gpuResourceID;
     memcpy(out->mapped_resource_id_buffer, &resource_id, sizeof(uint64_t));
     out->bindless_index = lrhi_metal4_bindless_manager_find_free_resource(&metal_device->bindless_manager);
@@ -3102,7 +3199,7 @@ static void lrhi_metal4_destroy_top_level_acceleration_structure(LRHITopLevelAcc
     metal_tlas->acceleration_structure = nil;
     metal_tlas->instance_buffer = nil;
     metal_tlas->resource_id_buffer = nil;
-    free(tlas);
+    LRHI_FREE(tlas);
 }
 
 static void lrhi_metal4_get_top_level_acceleration_structure_info(LRHITopLevelAccelerationStructure tlas, LRHITLASInfo* out_info)

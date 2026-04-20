@@ -224,6 +224,7 @@ typedef struct LRHITextureInfo {
     LRHITextureFormat format;
     LRHITextureUsage usage;
     LRHITextureDimensions dimensions;
+    const char* name;
 } LRHITextureInfo;
 
 typedef struct LRHIRegion {
@@ -239,6 +240,7 @@ typedef struct LRHIBufferInfo {
     uint64_t size;
     uint64_t stride;
     LRHIBufferUsage usage;
+    const char* name;
 } LRHIBufferInfo;
 
 typedef struct LRHISwapChainInfo {
@@ -297,6 +299,7 @@ typedef struct LRHIShaderModuleInfo {
 
     const uint32_t* code;
     uint32_t code_size;
+    const char* name;
 } LRHIShaderModuleInfo;
 
 typedef struct LRHIRenderPipelineInfo {
@@ -334,6 +337,7 @@ typedef struct LRHIRenderPipelineInfo {
     LRHIShaderModule fragment_shader;
     LRHIShaderModule mesh_shader;
     LRHIShaderModule task_shader;
+    const char* name;
 } LRHIRenderPipelineInfo;
 
 typedef struct LRHIRenderPipelineInfo LRHIMeshPipelineInfo;
@@ -341,6 +345,7 @@ typedef struct LRHIRenderPipelineInfo LRHIMeshPipelineInfo;
 typedef struct LRHIComputePipelineInfo {
     LRHIShaderModule compute_shader;
     uint8_t supports_indirect_commands;
+    const char* name;
 } LRHIComputePipelineInfo;
 
 typedef struct LRHIBufferViewInfo {
@@ -363,6 +368,7 @@ typedef struct LRHISamplerInfo {
     LRHICompareOperation compare_op;
     float min_lod;
     float max_lod;
+    const char* name;
 } LRHISamplerInfo;
 
 typedef struct LRHIDrawIndirectCommand {
@@ -439,9 +445,10 @@ typedef struct LRHIBLASGeometryInfo {
 typedef struct LRHIBLASInfo {
     uint8_t allow_update;
     LRHIBottomLevelGeometryType geometry_type;
-    
+
     uint32_t geometry_count;
     LRHIBLASGeometryInfo* geometries;
+    const char* name;
 } LRHIBLASInfo;
 
 typedef struct LRHIAccelerationStructureBufferSizes {
@@ -459,11 +466,23 @@ typedef struct LRHITLASInstanceInfo {
 
 typedef struct LRHITLASInfo {
     uint32_t max_instance_count;
+    const char* name;
 } LRHITLASInfo;
+
+typedef void* (*LRHIAllocFn)(size_t size, void* userdata);
+typedef void  (*LRHIFreeFn)(void* ptr, void* userdata);
+
+typedef struct LRHIAllocator {
+    LRHIAllocFn alloc;
+    LRHIFreeFn  free;
+    void*       userdata;
+} LRHIAllocator;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+void lrhi_set_allocator(LRHIAllocator allocator);
 
 /// Device functions
 void lrhi_create_device(LRHIBackend backend, LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
@@ -522,6 +541,8 @@ void lrhi_command_list_prepare_indirect_commands(LRHICommandList command_list, L
 // Copy pass functions
 LRHICopyPass lrhi_copy_pass_begin(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_error);
+void lrhi_copy_pass_push_debug_group(LRHICopyPass copy_pass, const char* label, LRHIError* out_error);
+void lrhi_copy_pass_pop_debug_group(LRHICopyPass copy_pass, LRHIError* out_error);
 void lrhi_copy_pass_intra_barrier(LRHICopyPass copy_pass, LRHIError* out_error); // Blit-Blit barrier
 void lrhi_copy_pass_encoder_barrier(LRHICopyPass copy_pass, LRHIRenderStage afterStage, LRHIError* out_error); // afterStage-Blit barrier
 void lrhi_copy_pass_copy_buffer_to_buffer(LRHICopyPass copy_pass, LRHIBuffer src_buffer, uint64_t src_offset, LRHIBuffer dst_buffer, uint64_t dst_offset, uint64_t size, LRHIError* out_error);
@@ -581,6 +602,8 @@ uint64_t lrhi_compute_pipeline_get_alloc_size(LRHIComputePipeline pipeline, LRHI
 // Render pass functions
 LRHIRenderPass lrhi_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error);
 void lrhi_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error);
+void lrhi_render_pass_push_debug_group(LRHIRenderPass render_pass, const char* label, LRHIError* out_error);
+void lrhi_render_pass_pop_debug_group(LRHIRenderPass render_pass, LRHIError* out_error);
 void lrhi_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage before_stage, LRHIRenderStage after_stage, LRHIError* out_error);
 void lrhi_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage before_stage, LRHIRenderStage after_stage, LRHIError* out_error);
 void lrhi_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error);
@@ -596,6 +619,8 @@ void lrhi_render_pass_execute_indirect_commands(LRHIRenderPass render_pass, LRHI
 // Compute pass functions
 LRHIComputePass lrhi_compute_pass_begin(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_compute_pass_end(LRHIComputePass compute_pass, LRHIError* out_error);
+void lrhi_compute_pass_push_debug_group(LRHIComputePass compute_pass, const char* label, LRHIError* out_error);
+void lrhi_compute_pass_pop_debug_group(LRHIComputePass compute_pass, LRHIError* out_error);
 void lrhi_compute_pass_barrier(LRHIComputePass compute_pass, LRHIError* out_error);
 void lrhi_compute_pass_encoder_barrier(LRHIComputePass compute_pass, LRHIRenderStage after_stage, LRHIError* out_error);
 void lrhi_compute_pass_set_pipeline(LRHIComputePass compute_pass, LRHIComputePipeline pipeline, LRHIError* out_error);
@@ -635,6 +660,8 @@ void lrhi_add_top_level_acceleration_structure_instance(LRHITopLevelAcceleration
 // Acceleration structure pass
 LRHIAccelerationStructurePass lrhi_acceleration_structure_pass_begin(LRHICommandList command_list, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_end(LRHIAccelerationStructurePass pass, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_push_debug_group(LRHIAccelerationStructurePass pass, const char* label, LRHIError* out_error);
+void lrhi_acceleration_structure_pass_pop_debug_group(LRHIAccelerationStructurePass pass, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_barrier(LRHIAccelerationStructurePass pass, LRHIError* out_error);
 void lrhi_acceleration_structure_encoder_barrier(LRHIAccelerationStructurePass pass, LRHIRenderStage after_stage, LRHIError* out_error);
 void lrhi_acceleration_structure_pass_build_blas(LRHIAccelerationStructurePass pass, LRHIBottomLevelAccelerationStructure blas, LRHIBuffer scratch_buffer, uint64_t scratch_offset, LRHIError* out_error);

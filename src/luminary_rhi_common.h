@@ -1,6 +1,7 @@
 #ifndef LUMINARY_RHI_COMMON_H
 #define LUMINARY_RHI_COMMON_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define LUMINARY_OPAQUE_TYPE(name) typedef struct name##_opaque* name
