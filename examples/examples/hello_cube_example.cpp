@@ -635,7 +635,8 @@ void HelloCubeExample::draw_ui()
                                      ImGuiWindowFlags_NoResize |
                                      ImGuiWindowFlags_NoSavedSettings |
                                      ImGuiWindowFlags_NoFocusOnAppearing |
-                                     ImGuiWindowFlags_NoNav;
+                                     ImGuiWindowFlags_NoNav |
+                                     ImGuiWindowFlags_AlwaysAutoResize;
 
     ImGui::Begin("Press Escape", nullptr, overlay_flags);
     ImGui::TextUnformatted("Press Escape to return to the examples menu.");

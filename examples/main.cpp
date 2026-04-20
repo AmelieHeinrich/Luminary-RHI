@@ -1,5 +1,6 @@
 #include "luminary_rhi.h"
 #include "window.h"
+#include "examples/compute_particles_example.h"
 #include "examples/hello_cube_example.h"
 #include "examples/hello_triangle_example.h"
 #include "imgui/imgui.h"
@@ -240,6 +241,13 @@ int main(void)
                     "hello_cube",
                     "Hello Cube",
                     "A spinning textured cube with a CPU-generated rainbow checkerboard.",
+                    active_example,
+                    device,
+                    sc_info.format);
+                AddExample<ComputeParticlesExample>(
+                    "compute_particles",
+                    "Compute Particles",
+                    "A 1,000,000-particle galaxy updated in compute and rendered as points.",
                     active_example,
                     device,
                     sc_info.format);

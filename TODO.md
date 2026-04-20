@@ -2,12 +2,12 @@
 
 - Heaps
 - Resource aliasing
+- Timestamps query
 
 ## Examples
 
 - Downsample/upsample bloom
 - GPU frustum culling
-- Compute particles
 - Pathtracer
 - Deferred shading
 - Global and local shadow maps
@@ -16,7 +16,6 @@
 - Volumetrics
 - Environment mapping
 - Mesh shaded isibility buffer
-- Timestamps query
 - Hillaire sky
 - Slug text rendering
 - Compute skinning
