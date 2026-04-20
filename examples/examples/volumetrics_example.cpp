@@ -1,8 +1,8 @@
 #include "volumetrics_example.h"
 
 #include "extras/shader_compiler/luminary_shader_compiler.h"
-#include "../hmm/HMM.h"
-#include "../imgui/imgui.h"
+#include "../ext/hmm/HMM.h"
+#include "../ext/imgui/imgui.h"
 
 #include <algorithm>
 #include <cmath>

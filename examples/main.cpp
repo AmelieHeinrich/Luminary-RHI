@@ -5,10 +5,10 @@
 #include "examples/hello_cube_example.h"
 #include "examples/hello_triangle_example.h"
 #include "examples/volumetrics_example.h"
-#include "imgui/imgui.h"
+#include "ext/imgui/imgui.h"
 
-#include "imgui/backends/imgui_impl_osx.h"
-#include "imgui/backends/imgui_impl_luminary.h"
+#include "ext/imgui/backends/imgui_impl_osx.h"
+#include "ext/imgui/backends/imgui_impl_luminary.h"
 
 #include <cfloat>
 #include <cstdio>
