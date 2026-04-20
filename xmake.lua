@@ -10,8 +10,8 @@ elseif is_plat("linux") then
     add_defines("LRHI_LINUX", { public = true })
 elseif is_plat("macosx") then
     add_defines("LRHI_MACOS", { public = true })
-    add_cflags("-x objective-c", { public = true })
-    add_cxxflags("-x objective-c++", { public = true })
+    add_cflags("-x objective-c", "-fobjc-arc", { public = true })
+    add_cxxflags("-x objective-c++", "-fobjc-arc", { public = true })
     add_frameworks("Foundation", "Metal")
 end
 
@@ -29,11 +29,14 @@ target("luminary_rhi")
 target("examples")
     set_kind("binary")
     add_files("examples/*.cpp")
-    add_deps("luminary_rhi")
+    add_deps("luminary_rhi", "shader_compiler")
+    add_includedirs("extras/shader_compiler")
 
     if is_plat("macosx") then
         add_frameworks("Foundation", "Metal", "QuartzCore", "Cocoa")
         add_files("examples/**.mm")
+        add_rpathdirs("bin/")
+        add_syslinks("bin/libdxcompiler.dylib", "bin/libmetalirconverter.dylib")
     end
 
 target("shader_compiler")

@@ -673,8 +673,16 @@ void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
 
 static void lrhi_metal4_destroy_device(LRHIDevice device)
 {
-    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
-    lrhi_metal4_bindless_manager_destroy(&metal_device->bindless_manager);
+    LRHIDeviceMetal4* d = (LRHIDeviceMetal4*)device;
+    lrhi_metal4_bindless_manager_destroy(&d->bindless_manager);
+    d->device                    = nil;
+    d->texture_view_pool         = nil;
+    d->draw_icb_pipe             = nil;
+    d->draw_indexed_icb_pipe     = nil;
+    d->dispatch_icb_pipe         = nil;
+    d->draw_mesh_tasks_icb_pipe  = nil;
+    d->reset_render_icb_pipe     = nil;
+    d->reset_compute_icb_pipe    = nil;
     free(device);
 }
 
@@ -738,6 +746,8 @@ static void lrhi_metal4_create_texture(LRHIDevice device, LRHITextureInfo* info,
 
 static void lrhi_metal4_destroy_texture(LRHITexture texture)
 {
+    LRHITextureMetal4* t = (LRHITextureMetal4*)texture;
+    t->texture = nil;
     free(texture);
 }
 
@@ -979,7 +989,11 @@ static void lrhi_metal4_create_command_queue(LRHIDevice device, LRHICommandQueue
 
 static void lrhi_metal4_destroy_command_queue(LRHICommandQueue queue)
 {
-    free(queue);
+    LRHICommandQueueMetal4* q = (LRHICommandQueueMetal4*)queue;
+    q->queue                   = nil;
+    q->device                  = nil;
+    q->internal_residency_set  = nil;
+    free(q);
 }
 
 static void lrhi_metal4_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error)
@@ -1059,7 +1073,9 @@ static void lrhi_metal4_create_fence(LRHIDevice device, uint64_t initial_value, 
 
 static void lrhi_metal4_destroy_fence(LRHIFence fence)
 {
-    free(fence);
+    LRHIFenceMetal4* f = (LRHIFenceMetal4*)fence;
+    f->event = nil;
+    free(f);
 }
 
 static uint64_t lrhi_metal4_fence_get_value(LRHIFence fence)
@@ -1136,7 +1152,13 @@ static void lrhi_metal4_create_command_list(LRHICommandQueue queue, LRHICommandL
 
 static void lrhi_metal4_destroy_command_list(LRHICommandList command_list)
 {
-    free(command_list);
+    LRHICommandListMetal4* cmd = (LRHICommandListMetal4*)command_list;
+    cmd->command_buffer        = nil;
+    cmd->command_allocator     = nil;
+    cmd->render_argument_table  = nil;
+    cmd->compute_argument_table = nil;
+    cmd->push_constant_buffer  = nil;
+    free(cmd);
 }
 
 static void lrhi_metal4_command_list_begin(LRHICommandList command_list, LRHIError* out_error)
@@ -1311,6 +1333,7 @@ static void lrhi_metal4_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_err
     (void)out_error;
     LRHICopyPassMetal4* metal_copy_pass = (LRHICopyPassMetal4*)copy_pass;
     [metal_copy_pass->blit_encoder endEncoding];
+    metal_copy_pass->blit_encoder = nil;
     free(metal_copy_pass);
 }
 
@@ -1400,7 +1423,9 @@ static void lrhi_metal4_create_residency_set(LRHIDevice device, LRHIResidencySet
 
 static void lrhi_metal4_destroy_residency_set(LRHIResidencySet residency_set)
 {
-    free(residency_set);
+    LRHIResidencySetMetal4* rs = (LRHIResidencySetMetal4*)residency_set;
+    rs->residency_set = nil;
+    free(rs);
 }
 
 static void lrhi_metal4_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
@@ -1534,6 +1559,7 @@ static void lrhi_metal4_destroy_texture_view(LRHITextureView texture_view)
     if (metal_texture_view->bindless_index != UINT32_MAX) {
         lrhi_metal4_bindless_manager_free_resource_view(metal_texture_view->bindless_manager, metal_texture_view->bindless_index);
     }
+    metal_texture_view->texture_view = nil;
     free(texture_view);
 }
 
@@ -1613,6 +1639,7 @@ static void lrhi_metal4_render_pass_end(LRHIRenderPass render_pass, LRHIError* o
     (void)out_error;
     LRHIRenderPassMetal4* metal_render_pass = (LRHIRenderPassMetal4*)render_pass;
     [metal_render_pass->render_encoder endEncoding];
+    metal_render_pass->render_encoder = nil;
     free(metal_render_pass);
 }
 
@@ -1868,6 +1895,9 @@ static void lrhi_metal4_create_shader_module(LRHIDevice device, LRHIShaderModule
 
 static void lrhi_metal4_destroy_shader_module(LRHIShaderModule shader_module)
 {
+    LRHIShaderModuleMetal4* m = (LRHIShaderModuleMetal4*)shader_module;
+    m->library  = nil;
+    m->function = nil;
     free(shader_module);
 }
 
@@ -1947,6 +1977,9 @@ static void lrhi_metal4_create_render_pipeline(LRHIDevice device, LRHIRenderPipe
 
 static void lrhi_metal4_destroy_render_pipeline(LRHIRenderPipeline pipeline)
 {
+    LRHIRenderPipelineMetal4* p = (LRHIRenderPipelineMetal4*)pipeline;
+    p->pipeline_state     = nil;
+    p->depth_stencil_state = nil;
     free(pipeline);
 }
 
@@ -2020,6 +2053,9 @@ static void lrhi_metal4_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipeline
 
 static void lrhi_metal4_destroy_mesh_pipeline(LRHIMeshPipeline pipeline)
 {
+    LRHIMeshPipelineMetal4* p = (LRHIMeshPipelineMetal4*)pipeline;
+    p->pipeline_state     = nil;
+    p->depth_stencil_state = nil;
     free(pipeline);
 }
 
@@ -2068,6 +2104,8 @@ static void lrhi_metal4_create_compute_pipeline(LRHIDevice device, LRHIComputePi
 
 static void lrhi_metal4_destroy_compute_pipeline(LRHIComputePipeline pipeline)
 {
+    LRHIComputePipelineMetal4* p = (LRHIComputePipelineMetal4*)pipeline;
+    p->pipeline_state = nil;
     free(pipeline);
 }
 
@@ -2113,6 +2151,7 @@ static void lrhi_metal4_compute_pass_end(LRHIComputePass compute_pass, LRHIError
     (void)out_error;
     LRHIComputePassMetal4* metal_compute_pass = (LRHIComputePassMetal4*)compute_pass;
     [metal_compute_pass->compute_encoder endEncoding];
+    metal_compute_pass->compute_encoder = nil;
     free(metal_compute_pass);
 }
 
@@ -2190,10 +2229,12 @@ static void lrhi_metal4_create_swap_chain(LRHIDevice device, LRHICommandQueue qu
         return;
     }
 
+    LRHIDeviceMetal4* metal_device = (LRHIDeviceMetal4*)device;
     LRHICommandQueueMetal4* metal_queue = (LRHICommandQueueMetal4*)queue;
     CAMetalLayer* layer = (__bridge CAMetalLayer*)info->handle.metal_layer;
 
     uint8_t max_fif = info->max_frames_in_flight > 0 ? info->max_frames_in_flight : 2;
+    layer.device               = metal_device->device;
     layer.pixelFormat          = lrhi_metal4_pixel_format(info->format);
     layer.drawableSize         = CGSizeMake(info->width, info->height);
     layer.framebufferOnly      = NO;

@@ -897,7 +897,14 @@ void lrhi_metal3_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
 
 static void lrhi_metal3_destroy_device(LRHIDevice device)
 {
-    lrhi_metal3_bindless_manager_destroy(&((LRHIDeviceMetal3*)device)->bindless_manager);
+    LRHIDeviceMetal3* d = (LRHIDeviceMetal3*)device;
+    lrhi_metal3_bindless_manager_destroy(&d->bindless_manager);
+    d->device                   = nil;
+    d->draw_icb_pipe            = nil;
+    d->draw_indexed_icb_pipe    = nil;
+    d->dispatch_icb_pipe        = nil;
+    d->draw_mesh_tasks_icb_pipe = nil;
+    d->internal_residency_set   = nil;
     free(device);
 }
 
@@ -961,6 +968,8 @@ static void lrhi_metal3_create_texture(LRHIDevice device, LRHITextureInfo* info,
 
 static void lrhi_metal3_destroy_texture(LRHITexture texture)
 {
+    LRHITextureMetal3* t = (LRHITextureMetal3*)texture;
+    t->texture = nil;
     free(texture);
 }
 
@@ -1024,6 +1033,13 @@ static void lrhi_metal3_create_buffer(LRHIDevice device, LRHIBufferInfo* info, L
 
 static void lrhi_metal3_destroy_buffer(LRHIBuffer buffer)
 {
+    LRHIBufferMetal3* b = (LRHIBufferMetal3*)buffer;
+    b->buffer           = nil;
+    b->icb              = nil;
+    b->icb_params       = nil;
+    b->draw_id_atomic   = nil;
+    b->per_draw_constants = nil;
+    b->primitive_type_buf = nil;
     free(buffer);
 }
 
@@ -1169,7 +1185,10 @@ static void lrhi_metal3_create_command_queue(LRHIDevice device, LRHICommandQueue
 
 static void lrhi_metal3_destroy_command_queue(LRHICommandQueue queue)
 {
-    free(queue);
+    LRHICommandQueueMetal3* q = (LRHICommandQueueMetal3*)queue;
+    q->queue   = nil;
+    q->device  = nil;
+    free(q);
 }
 
 static void lrhi_metal3_command_queue_signal(LRHICommandQueue queue, LRHIFence fence, uint64_t value, LRHIError* out_error)
@@ -1369,6 +1388,7 @@ static void lrhi_metal3_create_command_list(LRHICommandQueue queue, LRHICommandL
 static void lrhi_metal3_destroy_command_list(LRHICommandList command_list)
 {
     LRHICommandListMetal3* metal_cmd_list = (LRHICommandListMetal3*)command_list;
+    metal_cmd_list->command_buffer    = nil;
     metal_cmd_list->push_constant_buffer = nil;
     free(metal_cmd_list);
 }
@@ -1546,6 +1566,7 @@ static void lrhi_metal3_copy_pass_end(LRHICopyPass copy_pass, LRHIError* out_err
 {
     LRHICopyPassMetal3* metal_copy_pass = (LRHICopyPassMetal3*)copy_pass;
     [metal_copy_pass->blit_encoder endEncoding];
+    metal_copy_pass->blit_encoder = nil;
     free(metal_copy_pass);
 }
 
@@ -1623,7 +1644,9 @@ static void lrhi_metal3_create_residency_set(LRHIDevice device, LRHIResidencySet
 
 static void lrhi_metal3_destroy_residency_set(LRHIResidencySet residency_set)
 {
-    free(residency_set);
+    LRHIResidencySetMetal3* rs = (LRHIResidencySetMetal3*)residency_set;
+    rs->residency_set = nil;
+    free(rs);
 }
 
 static void lrhi_metal3_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
@@ -1780,6 +1803,9 @@ static void lrhi_metal3_destroy_texture_view(LRHITextureView texture_view)
     if (metal_texture_view->info.usage == LUMINARY_RHI_TEXTURE_USAGE_SAMPLED || metal_texture_view->info.usage == LUMINARY_RHI_TEXTURE_USAGE_STORAGE) {
         lrhi_metal3_bindless_manager_free_resource_view(metal_texture_view->bindless_manager, metal_texture_view->bindless_index);
     }
+    // Nil the id<MTLTexture> field so ARC emits the release before free()
+    // (id fields in malloc'd C structs are __unsafe_unretained — ARC won't release them otherwise)
+    metal_texture_view->texture_view = nil;
     free(texture_view);
 }
 
@@ -1856,6 +1882,7 @@ static void lrhi_metal3_render_pass_end(LRHIRenderPass render_pass, LRHIError* o
     (void)out_error;
     LRHIRenderPassMetal3* metal_render_pass = (LRHIRenderPassMetal3*)render_pass;
     [metal_render_pass->render_encoder endEncoding];
+    metal_render_pass->render_encoder = nil;
     free(metal_render_pass);
 }
 
@@ -2069,6 +2096,9 @@ static void lrhi_metal3_create_shader_module(LRHIDevice device, LRHIShaderModule
 
 static void lrhi_metal3_destroy_shader_module(LRHIShaderModule shader_module)
 {
+    LRHIShaderModuleMetal3* m = (LRHIShaderModuleMetal3*)shader_module;
+    m->library  = nil;
+    m->function = nil;
     free(shader_module);
 }
 
@@ -2148,6 +2178,9 @@ static void lrhi_metal3_create_render_pipeline(LRHIDevice device, LRHIRenderPipe
 
 static void lrhi_metal3_destroy_render_pipeline(LRHIRenderPipeline pipeline)
 {
+    LRHIRenderPipelineMetal3* p = (LRHIRenderPipelineMetal3*)pipeline;
+    p->pipeline_state      = nil;
+    p->depth_stencil_state = nil;
     free(pipeline);
 }
 
@@ -2221,6 +2254,9 @@ static void lrhi_metal3_create_mesh_pipeline(LRHIDevice device, LRHIMeshPipeline
 
 static void lrhi_metal3_destroy_mesh_pipeline(LRHIMeshPipeline pipeline)
 {
+    LRHIMeshPipelineMetal3* p = (LRHIMeshPipelineMetal3*)pipeline;
+    p->pipeline_state      = nil;
+    p->depth_stencil_state = nil;
     free(pipeline);
 }
 
@@ -2269,6 +2305,8 @@ static void lrhi_metal3_create_compute_pipeline(LRHIDevice device, LRHIComputePi
 
 static void lrhi_metal3_destroy_compute_pipeline(LRHIComputePipeline pipeline)
 {
+    LRHIComputePipelineMetal3* p = (LRHIComputePipelineMetal3*)pipeline;
+    p->pipeline_state = nil;
     free(pipeline);
 }
 
@@ -2311,6 +2349,7 @@ static void lrhi_metal3_compute_pass_end(LRHIComputePass compute_pass, LRHIError
     (void)out_error;
     LRHIComputePassMetal3* metal_compute_pass = (LRHIComputePassMetal3*)compute_pass;
     [metal_compute_pass->compute_encoder endEncoding];
+    metal_compute_pass->compute_encoder = nil;
     free(metal_compute_pass);
 }
 
@@ -3076,7 +3115,7 @@ static void lrhi_metal3_create_swap_chain(LRHIDevice device, LRHICommandQueue qu
                                            LRHISwapChain* out_swap_chain,
                                            LRHIError* out_error)
 {
-    (void)device;
+    LRHIDeviceMetal3* metal_device = (LRHIDeviceMetal3*)device;
     (void)queue;  // Metal3 does not use the queue for presentation
 
     if (info->handle_type != LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER) {
@@ -3090,6 +3129,7 @@ static void lrhi_metal3_create_swap_chain(LRHIDevice device, LRHICommandQueue qu
     }
 
     CAMetalLayer* layer = (__bridge CAMetalLayer*)info->handle.metal_layer;
+    layer.device          = metal_device->device;
     layer.pixelFormat     = lrhi_metal3_pixel_format(info->format);
     layer.drawableSize    = CGSizeMake(info->width, info->height);
     layer.framebufferOnly = NO;

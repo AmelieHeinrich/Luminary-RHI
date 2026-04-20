@@ -39,7 +39,7 @@ MacOSWindow::MacOSWindow()
     NSView* contentView = window.contentView;
     contentView.wantsLayer = YES;
     contentView.layer = metal_layer;
-    
+
     // 5. Present the Window
     [window makeKeyAndOrderFront:nil];
     [window center];
