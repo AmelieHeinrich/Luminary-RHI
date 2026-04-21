@@ -244,14 +244,294 @@ static void lrhi_d3d12_bindless_manager_init(LRHIDeviceD3D12* device, LRHIError*
 	if (hr_to_lrhi_error(hr, out_error, "Failed to create DSV heap!")) {
 		return;
 	}
+
+	device->bindless_manager.cbv_srv_uav_descriptor_size = ID3D12Device_GetDescriptorHandleIncrementSize(device->device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	device->bindless_manager.sampler_descriptor_size = ID3D12Device_GetDescriptorHandleIncrementSize(device->device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+	device->bindless_manager.rtv_descriptor_size = ID3D12Device_GetDescriptorHandleIncrementSize(device->device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	device->bindless_manager.dsv_descriptor_size = ID3D12Device_GetDescriptorHandleIncrementSize(device->device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+	lrhi_freelist_init(&device->bindless_manager.cbv_srv_uav_free_list, MAX_RESOURCE_HEAP_SIZE);
+	lrhi_freelist_init(&device->bindless_manager.sampler_free_list, MAX_SAMPLER_HEAP_SIZE);
+	lrhi_freelist_init(&device->bindless_manager.rtv_free_list, MAX_RTV_HEAP_SIZE);
+	lrhi_freelist_init(&device->bindless_manager.dsv_free_list, MAX_DSV_HEAP_SIZE);
 }
 
 static void lrhi_d3d12_bindless_manager_destroy(LRHIDeviceD3D12* device)
 {
+	lrhi_freelist_destroy(&device->bindless_manager.dsv_free_list);
+	lrhi_freelist_destroy(&device->bindless_manager.rtv_free_list);
+	lrhi_freelist_destroy(&device->bindless_manager.sampler_free_list);
+	lrhi_freelist_destroy(&device->bindless_manager.cbv_srv_uav_free_list);
 	ID3D12DescriptorHeap_Release(device->bindless_manager.cbv_srv_uav_heap);
 	ID3D12DescriptorHeap_Release(device->bindless_manager.sampler_heap);
 	ID3D12DescriptorHeap_Release(device->bindless_manager.rtv_heap);
 	ID3D12DescriptorHeap_Release(device->bindless_manager.dsv_heap);
+}
+
+static LRHIDescriptorD3D12 lrhi_d3d12_bindless_manager_new_srv(LRHIDeviceD3D12* device, LRHITextureViewInfo* info, LRHIError* out_error)
+{
+	D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc;
+	memset(&srv_desc, 0, sizeof(D3D12_SHADER_RESOURCE_VIEW_DESC));
+	if (info->format == LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED) {
+		srv_desc.Format = lrhi_format_to_dxgi_format(((LRHITextureD3D12*)info->texture)->info.format);
+	} else {
+		srv_desc.Format = lrhi_format_to_dxgi_format(info->format);
+	}
+	srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	switch (info->dimensions) {
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_1D:
+			srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
+			srv_desc.Texture1D.MostDetailedMip = info->base_mip_level;
+			srv_desc.Texture1D.MipLevels = info->mip_level_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D:
+			srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srv_desc.Texture2D.MostDetailedMip = info->base_mip_level;
+			srv_desc.Texture2D.MipLevels = info->mip_level_count;
+			srv_desc.Texture2D.PlaneSlice = info->base_array_layer;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY:
+			srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+			srv_desc.Texture2DArray.MostDetailedMip = info->base_mip_level;
+			srv_desc.Texture2DArray.MipLevels = info->mip_level_count;
+			srv_desc.Texture2DArray.FirstArraySlice = info->base_array_layer;
+			srv_desc.Texture2DArray.ArraySize = info->array_layer_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_3D:
+			srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+			srv_desc.Texture3D.MostDetailedMip = info->base_mip_level;
+			srv_desc.Texture3D.MipLevels = info->mip_level_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE:
+			srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+			srv_desc.TextureCube.MostDetailedMip = info->base_mip_level;
+			srv_desc.TextureCube.MipLevels = info->mip_level_count;
+			break;
+	}
+
+	uint32_t free_index = lrhi_freelist_allocate(&device->bindless_manager.cbv_srv_uav_free_list);
+	if (free_index == UINT32_MAX) {
+		out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+		snprintf(out_error->message, sizeof(out_error->message), "Failed to allocate descriptor from bindless heap!");
+		LRHIDescriptorD3D12 null_descriptor = { 0 };
+		return null_descriptor;
+	}
+	uint32_t descriptor_index = free_index;
+	D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle;
+	D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
+	ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(device->bindless_manager.cbv_srv_uav_heap, &cpu_handle);
+	ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(device->bindless_manager.cbv_srv_uav_heap, &gpu_handle);
+
+	cpu_handle.ptr += descriptor_index * device->bindless_manager.cbv_srv_uav_descriptor_size;
+	gpu_handle.ptr += descriptor_index * device->bindless_manager.cbv_srv_uav_descriptor_size;
+
+	ID3D12Device_CreateShaderResourceView(device->device, ((LRHITextureD3D12*)info->texture)->resource, &srv_desc, cpu_handle);
+
+	LRHIDescriptorD3D12 descriptor = {
+		.descriptor_index = descriptor_index,
+		.cpu_handle = cpu_handle,
+		.gpu_handle = gpu_handle,
+		.heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
+	};
+	return descriptor;
+}
+
+static LRHIDescriptorD3D12 lrhi_d3d12_bindless_manager_new_rtv(LRHIDeviceD3D12* device, LRHITextureViewInfo* info, LRHIError* out_error)
+{
+	D3D12_RENDER_TARGET_VIEW_DESC rtv_desc;
+	memset(&rtv_desc, 0, sizeof(D3D12_RENDER_TARGET_VIEW_DESC));
+	if (info->format == LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED) {
+		rtv_desc.Format = lrhi_format_to_dxgi_format(((LRHITextureD3D12*)info->texture)->info.format);
+	} else {
+		rtv_desc.Format = lrhi_format_to_dxgi_format(info->format);
+	}
+	switch (info->dimensions) {
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_1D:
+			rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE1D;
+			rtv_desc.Texture1D.MipSlice = info->base_mip_level;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D:
+			rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+			rtv_desc.Texture2D.MipSlice = info->base_mip_level;
+			rtv_desc.Texture2D.PlaneSlice = info->base_array_layer;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY:
+			rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+			rtv_desc.Texture2DArray.MipSlice = info->base_mip_level;
+			rtv_desc.Texture2DArray.FirstArraySlice = info->base_array_layer;
+			rtv_desc.Texture2DArray.ArraySize = info->array_layer_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_3D:
+			rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE3D;
+			rtv_desc.Texture3D.MipSlice = info->base_mip_level;
+			rtv_desc.Texture3D.FirstWSlice = info->base_array_layer;
+			rtv_desc.Texture3D.WSize = info->array_layer_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE:
+			out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+			snprintf(out_error->message, sizeof(out_error->message), "Cube textures cannot be used as render targets in D3D12!");
+			LRHIDescriptorD3D12 null_descriptor = { 0 };
+			return null_descriptor;
+	}
+
+	uint32_t free_index = lrhi_freelist_allocate(&device->bindless_manager.rtv_free_list);
+	if (free_index == UINT32_MAX) {
+		LRHIDescriptorD3D12 null_descriptor = { 0 };
+		return null_descriptor;
+	}
+	uint32_t descriptor_index = free_index;
+	D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle;
+	D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
+	ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(device->bindless_manager.rtv_heap, &cpu_handle);
+	ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(device->bindless_manager.rtv_heap, &gpu_handle);
+
+	cpu_handle.ptr += descriptor_index * device->bindless_manager.rtv_descriptor_size;
+	gpu_handle.ptr += descriptor_index * device->bindless_manager.rtv_descriptor_size;
+
+	ID3D12Device_CreateRenderTargetView(device->device, ((LRHITextureD3D12*)info->texture)->resource, &rtv_desc, cpu_handle);
+
+	LRHIDescriptorD3D12 descriptor = {
+		.descriptor_index = descriptor_index,
+		.cpu_handle = cpu_handle,
+		.gpu_handle = gpu_handle,
+		.heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV
+	};
+	return descriptor;
+}
+
+static LRHIDescriptorD3D12 lrhi_d3d12_bindless_manager_new_dsv(LRHIDeviceD3D12* device, LRHITextureViewInfo* info, LRHIError* out_error)
+{
+	D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc;
+	memset(&dsv_desc, 0, sizeof(D3D12_DEPTH_STENCIL_VIEW_DESC));
+	if (info->format == LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED) {
+		dsv_desc.Format = lrhi_format_to_dxgi_format(((LRHITextureD3D12*)info->texture)->info.format);
+	} else {
+		dsv_desc.Format = lrhi_format_to_dxgi_format(info->format);
+	}
+	switch (info->dimensions) {
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_1D:
+			dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE1D;
+			dsv_desc.Texture1D.MipSlice = info->base_mip_level;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D:
+			dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+			dsv_desc.Texture2D.MipSlice = info->base_mip_level;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY:
+			dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+			dsv_desc.Texture2DArray.MipSlice = info->base_mip_level;
+			dsv_desc.Texture2DArray.FirstArraySlice = info->base_array_layer;
+			dsv_desc.Texture2DArray.ArraySize = info->array_layer_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE:
+			out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+			snprintf(out_error->message, sizeof(out_error->message), "Cube textures cannot be used as depth stencil targets in D3D12!");
+			LRHIDescriptorD3D12 null_descriptor = { 0 };
+			return null_descriptor;
+	}
+
+	uint32_t free_index = lrhi_freelist_allocate(&device->bindless_manager.dsv_free_list);
+	if (free_index == UINT32_MAX) {
+		LRHIDescriptorD3D12 null_descriptor = { 0 };
+		return null_descriptor;
+	}
+	uint32_t descriptor_index = free_index;
+	D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle;
+	D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
+	ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(device->bindless_manager.dsv_heap, &cpu_handle);
+	ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(device->bindless_manager.dsv_heap, &gpu_handle);
+
+	cpu_handle.ptr += descriptor_index * device->bindless_manager.dsv_descriptor_size;
+	gpu_handle.ptr += descriptor_index * device->bindless_manager.dsv_descriptor_size;
+
+	ID3D12Device_CreateDepthStencilView(device->device, ((LRHITextureD3D12*)info->texture)->resource, &dsv_desc, cpu_handle);
+
+	LRHIDescriptorD3D12 descriptor = {
+		.descriptor_index = descriptor_index,
+		.cpu_handle = cpu_handle,
+		.gpu_handle = gpu_handle,
+		.heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV
+	};
+	return descriptor;
+}
+
+static LRHIDescriptorD3D12 lrhi_d3d12_bindless_manager_new_uav(LRHIDeviceD3D12* device, LRHITextureViewInfo* info, LRHIError* out_error)
+{
+	D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc;
+	memset(&uav_desc, 0, sizeof(D3D12_UNORDERED_ACCESS_VIEW_DESC));
+	if (info->format == LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED) {
+		uav_desc.Format = lrhi_format_to_dxgi_format(((LRHITextureD3D12*)info->texture)->info.format);
+	} else {
+		uav_desc.Format = lrhi_format_to_dxgi_format(info->format);
+	}
+	switch (info->dimensions) {
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_1D:
+			uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
+			uav_desc.Texture1D.MipSlice = info->base_mip_level;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D:
+			uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+			uav_desc.Texture2D.MipSlice = info->base_mip_level;
+			uav_desc.Texture2D.PlaneSlice = info->base_array_layer;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_2D_ARRAY:
+			uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+			uav_desc.Texture2DArray.MipSlice = info->base_mip_level;
+			uav_desc.Texture2DArray.FirstArraySlice = info->base_array_layer;
+			uav_desc.Texture2DArray.ArraySize = info->array_layer_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_3D:
+			uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+			uav_desc.Texture3D.MipSlice = info->base_mip_level;
+			uav_desc.Texture3D.FirstWSlice = info->base_array_layer;
+			uav_desc.Texture3D.WSize = info->array_layer_count;
+			break;
+		case LUMINARY_RHI_TEXTURE_DIMENSIONS_CUBE:
+			out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+			snprintf(out_error->message, sizeof(out_error->message), "Cube textures cannot be used as unordered access views in D3D12!");
+			LRHIDescriptorD3D12 null_descriptor = { 0 };
+			return null_descriptor;
+	}
+	uint32_t free_index = lrhi_freelist_allocate(&device->bindless_manager.cbv_srv_uav_free_list);
+	if (free_index == UINT32_MAX) {
+		LRHIDescriptorD3D12 null_descriptor = { 0 };
+		return null_descriptor;
+	}
+	
+	uint32_t descriptor_index = free_index;
+	D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle;
+	D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
+
+	ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(device->bindless_manager.cbv_srv_uav_heap, &cpu_handle);
+	ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(device->bindless_manager.cbv_srv_uav_heap, &gpu_handle);
+
+	cpu_handle.ptr += descriptor_index * device->bindless_manager.cbv_srv_uav_descriptor_size;
+	gpu_handle.ptr += descriptor_index * device->bindless_manager.cbv_srv_uav_descriptor_size;
+
+	ID3D12Device_CreateUnorderedAccessView(device->device, ((LRHITextureD3D12*)info->texture)->resource, NULL, &uav_desc, cpu_handle);
+
+	LRHIDescriptorD3D12 descriptor = {
+		.descriptor_index = descriptor_index,
+		.cpu_handle = cpu_handle,
+		.gpu_handle = gpu_handle,
+		.heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
+	};
+	return descriptor;
+}
+
+static void lrhi_d3d12_bindless_manager_free_texture_view(LRHIDeviceD3D12* device, LRHIDescriptorD3D12* descriptor)
+{
+	switch (descriptor->heap_type) {
+		case D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV:
+			lrhi_freelist_free(&device->bindless_manager.cbv_srv_uav_free_list, descriptor->descriptor_index);
+			break;
+		case D3D12_DESCRIPTOR_HEAP_TYPE_RTV:
+			lrhi_freelist_free(&device->bindless_manager.rtv_free_list, descriptor->descriptor_index);
+			break;
+		case D3D12_DESCRIPTOR_HEAP_TYPE_DSV:
+			lrhi_freelist_free(&device->bindless_manager.dsv_free_list, descriptor->descriptor_index);
+			break;
+	}
 }
 
 // Enum translation
@@ -1830,17 +2110,35 @@ static void lrhi_d3d12_swap_chain_present(LRHISwapChain swap_chain, LRHIError* o
 
 static void lrhi_d3d12_create_texture_view(LRHIDevice device, LRHITextureViewInfo* info, LRHITextureView* out_texture_view, LRHIError* out_error)
 {
-	(void)device;
-	(void)info;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_create_texture_view");
-	*out_texture_view = NULL;
+	LRHIDeviceD3D12* device_d3d12 = (LRHIDeviceD3D12*)device;
+
+	LRHITextureViewD3D12* texture_view_d3d12 = LRHI_MALLOC(sizeof(LRHITextureViewD3D12));
+	memset(texture_view_d3d12, 0, sizeof(LRHITextureViewD3D12));
+	texture_view_d3d12->base.vtable = &lrhi_d3d12_texture_view_vtable;
+	texture_view_d3d12->info = *info;
+	texture_view_d3d12->device_ref = device_d3d12;
+	switch (info->usage) {
+		case LUMINARY_RHI_TEXTURE_USAGE_SAMPLED:
+			texture_view_d3d12->descriptor = lrhi_d3d12_bindless_manager_new_srv(device_d3d12, info, out_error);
+			break;
+		case LUMINARY_RHI_TEXTURE_USAGE_STORAGE:
+			texture_view_d3d12->descriptor = lrhi_d3d12_bindless_manager_new_uav(device_d3d12, info, out_error);
+			break;
+		case LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET:
+			texture_view_d3d12->descriptor = lrhi_d3d12_bindless_manager_new_rtv(device_d3d12, info, out_error);
+			break;
+		case LUMINARY_RHI_TEXTURE_USAGE_DEPTH_STENCIL:
+			texture_view_d3d12->descriptor = lrhi_d3d12_bindless_manager_new_dsv(device_d3d12, info, out_error);
+			break;
+	}
+	*out_texture_view = (LRHITextureView)texture_view_d3d12;
 }
 
 static void lrhi_d3d12_destroy_texture_view(LRHITextureView texture_view)
 {
-	if (texture_view) {
-		LRHI_FREE(texture_view);
-	}
+	LRHITextureViewD3D12* texture_view_d3d12 = (LRHITextureViewD3D12*)texture_view;
+	lrhi_d3d12_bindless_manager_free_texture_view(texture_view_d3d12->device_ref, &texture_view_d3d12->descriptor);
+	LRHI_FREE(texture_view);
 }
 
 static void lrhi_d3d12_get_texture_view_info(LRHITextureView texture_view, LRHITextureViewInfo* out_info)
@@ -1853,52 +2151,114 @@ static void lrhi_d3d12_get_texture_view_info(LRHITextureView texture_view, LRHIT
 
 static uint32_t lrhi_d3d12_texture_view_get_bindless_index(LRHITextureView texture_view, LRHIError* out_error)
 {
-	(void)texture_view;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_texture_view_get_bindless_index");
-	return 0;
+	LRHITextureViewD3D12* texture_view_d3d12 = (LRHITextureViewD3D12*)texture_view;
+	return texture_view_d3d12->descriptor.descriptor_index;
 }
 
 static LRHIRenderPass lrhi_d3d12_render_pass_begin(LRHICommandList command_list, LRHIRenderPassInfo* info, LRHIError* out_error)
 {
-	(void)command_list;
-	(void)info;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_render_pass_begin");
-	return NULL;
+	// Populate render target lists and clear them depending on flags
+	D3D12_CPU_DESCRIPTOR_HANDLE rtv_descriptors[8];
+	D3D12_CPU_DESCRIPTOR_HANDLE dsv_descriptor;
+	float clear_colors[8][4];
+	float clear_depth = 1.0f;
+	float clear_stencil = 0.0f;
+
+	for (uint32_t i = 0; i < info->color_attachment_count; ++i) {
+		LRHITextureViewD3D12* texture_view_d3d12 = (LRHITextureViewD3D12*)info->color_attachments[i].texture_view;
+		rtv_descriptors[i] = texture_view_d3d12->descriptor.cpu_handle;
+		clear_colors[i][0] = info->color_attachments[i].clear_color[0];
+		clear_colors[i][1] = info->color_attachments[i].clear_color[1];
+		clear_colors[i][2] = info->color_attachments[i].clear_color[2];
+		clear_colors[i][3] = info->color_attachments[i].clear_color[3];
+	}
+
+	if (info->has_depth_stencil_attachment) {
+		LRHITextureViewD3D12* texture_view_d3d12 = (LRHITextureViewD3D12*)info->depth_stencil_attachment.texture_view;
+		dsv_descriptor = texture_view_d3d12->descriptor.cpu_handle;
+		clear_depth = info->depth_stencil_attachment.clear_depth;
+		clear_stencil = (float)info->depth_stencil_attachment.clear_stencil;
+	}
+
+	LRHIRenderPassD3D12* render_pass = LRHI_MALLOC(sizeof(LRHIRenderPassD3D12));
+	memset(render_pass, 0, sizeof(LRHIRenderPassD3D12));
+	render_pass->base.vtable = &lrhi_d3d12_render_pass_vtable;
+	render_pass->command_list = ((LRHICommandListD3D12*)command_list)->command_list;
+	memcpy(render_pass->push_constants, ((LRHICommandListD3D12*)command_list)->push_constants, sizeof(render_pass->push_constants));
+
+	// Now, set color attachments and clear them if needed
+	for (uint32_t i = 0; i < info->color_attachment_count; ++i) {
+		if (info->color_attachments[i].load_action == LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR) {
+			ID3D12GraphicsCommandList_ClearRenderTargetView(render_pass->command_list, rtv_descriptors[i], clear_colors[i], 0, NULL);
+		}
+		if (info->has_depth_stencil_attachment) {
+			if (info->depth_stencil_attachment.load_action == LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR) {
+				ID3D12GraphicsCommandList_ClearDepthStencilView(render_pass->command_list, dsv_descriptor, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, clear_depth, (UINT8)clear_stencil, 0, NULL);
+			}
+		}
+	}
+	ID3D12GraphicsCommandList_OMSetRenderTargets(render_pass->command_list, info->color_attachment_count, rtv_descriptors, FALSE, info->has_depth_stencil_attachment ? &dsv_descriptor : NULL);
+
+	return (LRHIRenderPass)render_pass;
 }
 
 static void lrhi_d3d12_render_pass_end(LRHIRenderPass render_pass, LRHIError* out_error)
 {
 	(void)render_pass;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_render_pass_end");
+	(void)out_error;
 }
 
 static void lrhi_d3d12_render_pass_push_debug_group(LRHIRenderPass render_pass, const char* label, LRHIError* out_error)
 {
 	(void)render_pass;
 	(void)label;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_render_pass_push_debug_group");
+	(void)out_error;
 }
 
 static void lrhi_d3d12_render_pass_pop_debug_group(LRHIRenderPass render_pass, LRHIError* out_error)
 {
 	(void)render_pass;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_render_pass_pop_debug_group");
+	(void)out_error;
 }
 
 static void lrhi_d3d12_render_pass_intra_barrier(LRHIRenderPass render_pass, LRHIRenderStage before_stage, LRHIRenderStage after_stage, LRHIError* out_error)
 {
-	(void)render_pass;
-	(void)before_stage;
-	(void)after_stage;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_render_pass_intra_barrier");
+	LRHIRenderPassD3D12* render_pass_d3d12 = (LRHIRenderPassD3D12*)render_pass;
+
+    D3D12_GLOBAL_BARRIER global_barrier;
+    memset(&global_barrier, 0, sizeof(global_barrier));
+    global_barrier.SyncBefore = lrhi_pipeline_stage_to_d3d12_barrier_sync(after_stage);
+    global_barrier.SyncAfter = lrhi_pipeline_stage_to_d3d12_barrier_sync(before_stage);
+    global_barrier.AccessBefore = lrhi_pipeline_usage_to_d3d12_barrier_access(after_stage);
+    global_barrier.AccessAfter = lrhi_pipeline_usage_to_d3d12_barrier_access(before_stage);
+
+    D3D12_BARRIER_GROUP barrier_group;
+    memset(&barrier_group, 0, sizeof(barrier_group));
+    barrier_group.Type = D3D12_BARRIER_TYPE_GLOBAL;
+    barrier_group.NumBarriers = 1;
+    barrier_group.pGlobalBarriers = &global_barrier;
+
+    ID3D12GraphicsCommandList10_Barrier(render_pass_d3d12->command_list, 1, &barrier_group);
 }
 
 static void lrhi_d3d12_render_pass_encoder_barrier(LRHIRenderPass render_pass, LRHIRenderStage before_stage, LRHIRenderStage after_stage, LRHIError* out_error)
 {
-	(void)render_pass;
-	(void)before_stage;
-	(void)after_stage;
-	lrhi_d3d12_set_not_implemented(out_error, "lrhi_render_pass_encoder_barrier");
+	LRHIRenderPassD3D12* render_pass_d3d12 = (LRHIRenderPassD3D12*)render_pass;
+
+    D3D12_GLOBAL_BARRIER global_barrier;
+    memset(&global_barrier, 0, sizeof(global_barrier));
+    global_barrier.SyncBefore = lrhi_pipeline_stage_to_d3d12_barrier_sync(after_stage);
+    global_barrier.SyncAfter = lrhi_pipeline_stage_to_d3d12_barrier_sync(before_stage);
+    global_barrier.AccessBefore = lrhi_pipeline_usage_to_d3d12_barrier_access(after_stage);
+    global_barrier.AccessAfter = lrhi_pipeline_usage_to_d3d12_barrier_access(before_stage);
+
+    D3D12_BARRIER_GROUP barrier_group;
+    memset(&barrier_group, 0, sizeof(barrier_group));
+    barrier_group.Type = D3D12_BARRIER_TYPE_GLOBAL;
+    barrier_group.NumBarriers = 1;
+    barrier_group.pGlobalBarriers = &global_barrier;
+
+    ID3D12GraphicsCommandList10_Barrier(render_pass_d3d12->command_list, 1, &barrier_group);
 }
 
 static void lrhi_d3d12_render_pass_set_render_pipeline(LRHIRenderPass render_pass, LRHIRenderPipeline pipeline, LRHIError* out_error)

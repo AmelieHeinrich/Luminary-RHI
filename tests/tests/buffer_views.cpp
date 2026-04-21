@@ -117,8 +117,7 @@ public:
         LRHIBufferInfo bi = {};
         bi.size   = 64;
         bi.stride = 4;
-        bi.usage  = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_READ |
-                                      LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE);
+        bi.usage  = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE | LUMINARY_RHI_BUFFER_USAGE_CONSTANT);
         LRHIError err = {};
         lrhi_create_buffer(device, &bi, &_buffer, &err);
 

@@ -102,9 +102,33 @@ static bool barrier_end_cmd(LRHIDevice device,
         lrhi_destroy_command_queue(queue);
         return false;
     }
-    lrhi_command_queue_submit(queue, &cmd, 1, fence, 1, nullptr, 0, nullptr);
-    lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, nullptr);
-    lrhi_fence_wait(fence, 1, 5000000000ULL, nullptr);
+    err = {};
+    lrhi_command_queue_submit(queue, &cmd, 1, fence, 1, nullptr, 0, &err);
+    if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+        err_out = std::string("cmd submit: ") + err.message;
+        lrhi_destroy_command_list(cmd);
+        lrhi_destroy_fence(fence);
+        lrhi_destroy_command_queue(queue);
+        return false;
+    }
+    err = {};
+    lrhi_command_queue_wait(queue, fence, 1, 5000000000ULL, &err);
+    if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+        err_out = std::string("cmd queue wait: ") + err.message;
+        lrhi_destroy_command_list(cmd);
+        lrhi_destroy_fence(fence);
+        lrhi_destroy_command_queue(queue);
+        return false;
+    }
+    err = {};
+    lrhi_fence_wait(fence, 1, 5000000000ULL, &err);
+    if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+        err_out = std::string("fence wait: ") + err.message;
+        lrhi_destroy_command_list(cmd);
+        lrhi_destroy_fence(fence);
+        lrhi_destroy_command_queue(queue);
+        return false;
+    }
     lrhi_destroy_command_list(cmd);
     lrhi_destroy_fence(fence);
     lrhi_destroy_command_queue(queue);
@@ -124,6 +148,7 @@ class barrier_copy_intra_pass_test : public test
     LRHIBuffer _bufB = nullptr;
     LRHIBuffer _bufC = nullptr;
     LRHIResidencySet _rs = nullptr;
+    bool _init_success = false;
 
 public:
     barrier_copy_intra_pass_test() {
@@ -134,44 +159,176 @@ public:
 
     void init(LRHIDevice device) override {
         _device = device;
+        _init_success = false;
         LRHIBufferUsage u = LUMINARY_RHI_BUFFER_USAGE_STAGING;
         LRHIBufferInfo info = {}; info.size = SIZE; info.stride = 4; info.usage = u;
         LRHIError err = {};
+        
         lrhi_create_buffer(_device, &info, &_bufA, &err);
-        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS)
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
             fprintf(stderr, "Failed to create buffer A: %s\n", err.message);
+            return;
+        }
+        
+        err = {};
         lrhi_create_buffer(_device, &info, &_bufB, &err);
-        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS)
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
             fprintf(stderr, "Failed to create buffer B: %s\n", err.message);
+            lrhi_destroy_buffer(_bufA);
+            _bufA = nullptr;
+            return;
+        }
+        
+        err = {};
         lrhi_create_buffer(_device, &info, &_bufC, &err);
-        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS)
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
             fprintf(stderr, "Failed to create buffer C: %s\n", err.message);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            _bufA = nullptr;
+            _bufB = nullptr;
+            return;
+        }
+        
+        err = {};
         lrhi_create_residency_set(_device, &_rs, &err);
-        lrhi_residency_set_add_buffer(_rs, _bufA, nullptr);
-        lrhi_residency_set_add_buffer(_rs, _bufB, nullptr);
-        lrhi_residency_set_add_buffer(_rs, _bufC, nullptr);
-        lrhi_residency_set_update(_rs, nullptr);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create residency set: %s\n", err.message);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_buffer(_rs, _bufA, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add buffer A to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_buffer(_rs, _bufB, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add buffer B to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_buffer(_rs, _bufC, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add buffer C to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_update(_rs, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to update residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        _init_success = true;
     }
     
     test_result run(bool bake_mode) override {
-        if (!_bufA) return {false, "Buffer A is null (creation likely failed)"};
+        if (!_init_success) return {false, "Initialization failed"};
+        if (!_bufA || !_bufB || !_bufC) return {false, "Buffers are null (creation likely failed)"};
+        
         LRHIError map_err = {};
         void* ptr = lrhi_buffer_map(_bufA, &map_err);
         if (map_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !ptr) {
             return {false, std::string("map buffer A failed: ") + map_err.message};
         }
         for(uint32_t i=0; i<SIZE/4; ++i) ((uint32_t*)ptr)[i] = i + 1;
+        
+        map_err = {};
         lrhi_buffer_unmap(_bufA);
         
         LRHICommandQueue q=nullptr; LRHIFence f=nullptr; LRHICommandList cmd=nullptr; std::string err;
         if (!barrier_begin_cmd(_device, &q, &f, &cmd, err)) return {false, err};
-        lrhi_command_queue_add_residency_set(q, _rs, nullptr);
+        
+        LRHIError res_err = {};
+        lrhi_command_queue_add_residency_set(q, _rs, &res_err);
+        if (res_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("add residency set failed: ") + res_err.message};
+        }
 
         LRHICopyPass cp = lrhi_copy_pass_begin(cmd, nullptr);
-        lrhi_copy_pass_copy_buffer_to_buffer(cp, _bufA, 0, _bufB, 0, SIZE, nullptr);
-        lrhi_copy_pass_intra_barrier(cp, nullptr);
-        lrhi_copy_pass_copy_buffer_to_buffer(cp, _bufB, 0, _bufC, 0, SIZE, nullptr);
-        lrhi_copy_pass_end(cp, nullptr);
+        if (!cp) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, "copy pass begin failed"};
+        }
+        
+        LRHIError cp_err = {};
+        lrhi_copy_pass_copy_buffer_to_buffer(cp, _bufA, 0, _bufB, 0, SIZE, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy buffer A->B failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_intra_barrier(cp, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass intra barrier failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_copy_buffer_to_buffer(cp, _bufB, 0, _bufC, 0, SIZE, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy buffer B->C failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_end(cp, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass end failed: ") + cp_err.message};
+        }
 
         if (!barrier_end_cmd(_device, q, f, cmd, err)) return {false, err};
         return buffer_test_result(_device, _bufC, name, source_path, bake_mode);
@@ -201,6 +358,7 @@ class barrier_copy_to_copy_encoder_test : public test
     LRHIBuffer _bufB = nullptr;
     LRHIBuffer _bufC = nullptr;
     LRHIResidencySet _rs = nullptr;
+    bool _init_success = false;
 
 public:
     barrier_copy_to_copy_encoder_test() {
@@ -211,41 +369,191 @@ public:
 
     void init(LRHIDevice device) override {
         _device = device;
+        _init_success = false;
         LRHIBufferUsage u = LUMINARY_RHI_BUFFER_USAGE_STAGING;
         LRHIBufferInfo info = {}; info.size = SIZE; info.stride = 4; info.usage = u;
         LRHIError err = {};
+        
         lrhi_create_buffer(_device, &info, &_bufA, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create buffer A: %s\n", err.message);
+            return;
+        }
+        
+        err = {};
         lrhi_create_buffer(_device, &info, &_bufB, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create buffer B: %s\n", err.message);
+            lrhi_destroy_buffer(_bufA);
+            _bufA = nullptr;
+            return;
+        }
+        
+        err = {};
         lrhi_create_buffer(_device, &info, &_bufC, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create buffer C: %s\n", err.message);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            _bufA = nullptr;
+            _bufB = nullptr;
+            return;
+        }
+        
+        err = {};
         lrhi_create_residency_set(_device, &_rs, &err);
-        lrhi_residency_set_add_buffer(_rs, _bufA, nullptr);
-        lrhi_residency_set_add_buffer(_rs, _bufB, nullptr);
-        lrhi_residency_set_add_buffer(_rs, _bufC, nullptr);
-        lrhi_residency_set_update(_rs, nullptr);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create residency set: %s\n", err.message);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_buffer(_rs, _bufA, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add buffer A to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_buffer(_rs, _bufB, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add buffer B to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_buffer(_rs, _bufC, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add buffer C to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_update(_rs, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to update residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_buffer(_bufA);
+            lrhi_destroy_buffer(_bufB);
+            lrhi_destroy_buffer(_bufC);
+            _rs = nullptr;
+            _bufA = nullptr;
+            _bufB = nullptr;
+            _bufC = nullptr;
+            return;
+        }
+        
+        _init_success = true;
     }
     
     test_result run(bool bake_mode) override {
-        if (!_bufA) return {false, "Buffer A is null (creation likely failed)"};
+        if (!_init_success) return {false, "Initialization failed"};
+        if (!_bufA || !_bufB || !_bufC) return {false, "Buffers are null (creation likely failed)"};
+        
         LRHIError map_err = {};
         void* ptr = lrhi_buffer_map(_bufA, &map_err);
         if (map_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !ptr) {
             return {false, std::string("map buffer A failed: ") + map_err.message};
         }
         for(uint32_t i=0; i<SIZE/4; ++i) ((uint32_t*)ptr)[i] = i + 2;
+        
+        map_err = {};
         lrhi_buffer_unmap(_bufA);
         
         LRHICommandQueue q=nullptr; LRHIFence f=nullptr; LRHICommandList cmd=nullptr; std::string err;
         if (!barrier_begin_cmd(_device, &q, &f, &cmd, err)) return {false, err};
-        lrhi_command_queue_add_residency_set(q, _rs, nullptr);
+        
+        LRHIError res_err = {};
+        lrhi_command_queue_add_residency_set(q, _rs, &res_err);
+        if (res_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("add residency set failed: ") + res_err.message};
+        }
 
         LRHICopyPass cp1 = lrhi_copy_pass_begin(cmd, nullptr);
-        lrhi_copy_pass_copy_buffer_to_buffer(cp1, _bufA, 0, _bufB, 0, SIZE, nullptr);
-        lrhi_copy_pass_end(cp1, nullptr);
+        if (!cp1) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, "copy pass 1 begin failed"};
+        }
+        
+        LRHIError cp_err = {};
+        lrhi_copy_pass_copy_buffer_to_buffer(cp1, _bufA, 0, _bufB, 0, SIZE, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass 1 buffer copy failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_end(cp1, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass 1 end failed: ") + cp_err.message};
+        }
 
         LRHICopyPass cp2 = lrhi_copy_pass_begin(cmd, nullptr);
-        lrhi_copy_pass_encoder_barrier(cp2, LUMINARY_RHI_RENDER_STAGE_COPY, nullptr);
-        lrhi_copy_pass_copy_buffer_to_buffer(cp2, _bufB, 0, _bufC, 0, SIZE, nullptr);
-        lrhi_copy_pass_end(cp2, nullptr);
+        if (!cp2) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, "copy pass 2 begin failed"};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_encoder_barrier(cp2, LUMINARY_RHI_RENDER_STAGE_COPY, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass 2 encoder barrier failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_copy_buffer_to_buffer(cp2, _bufB, 0, _bufC, 0, SIZE, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass 2 buffer copy failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_end(cp2, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass 2 end failed: ") + cp_err.message};
+        }
 
         if (!barrier_end_cmd(_device, q, f, cmd, err)) return {false, err};
         return buffer_test_result(_device, _bufC, name, source_path, bake_mode);
@@ -275,6 +583,7 @@ class barrier_copy_to_render_encoder_test : public test
     LRHITextureView _view   = nullptr;
     LRHIBuffer      _buf    = nullptr;
     LRHIResidencySet _rs    = nullptr;
+    bool _init_success = false;
 
 public:
     barrier_copy_to_render_encoder_test() {
@@ -285,58 +594,193 @@ public:
 
     void init(LRHIDevice device) override {
         _device = device;
+        _init_success = false;
         LRHIBufferInfo binfo = {}; binfo.size = W * H * 4; binfo.stride = 4;
         binfo.usage = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_READ | LUMINARY_RHI_BUFFER_USAGE_STAGING);
-        lrhi_create_buffer(_device, &binfo, &_buf, nullptr);
+        LRHIError err = {};
+        
+        lrhi_create_buffer(_device, &binfo, &_buf, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create upload buffer: %s\n", err.message);
+            return;
+        }
 
         LRHITextureInfo info = {}; info.width = W; info.height = H; info.depth = 1;
         info.mip_levels = 1; info.array_layers = 1;
         info.format = LUMINARY_RHI_TEXTURE_FORMAT_R8G8B8A8_UNORM;
         info.usage  = (LRHITextureUsage)(LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET | LUMINARY_RHI_TEXTURE_USAGE_SAMPLED);
         info.dimensions = LUMINARY_RHI_TEXTURE_DIMENSIONS_2D;
-        lrhi_create_texture(_device, &info, &_tex, nullptr);
+        
+        err = {};
+        lrhi_create_texture(_device, &info, &_tex, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create texture: %s\n", err.message);
+            lrhi_destroy_buffer(_buf);
+            _buf = nullptr;
+            return;
+        }
 
         LRHITextureViewInfo vinfo = {}; vinfo.texture = _tex; vinfo.base_mip_level = 0; vinfo.mip_level_count = 1;
         vinfo.base_array_layer = 0; vinfo.array_layer_count = 1; vinfo.format = LUMINARY_RHI_TEXTURE_FORMAT_UNDEFINED;
         vinfo.usage = LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET; vinfo.dimensions = LUMINARY_RHI_TEXTURE_DIMENSIONS_2D;
-        lrhi_create_texture_view(_device, &vinfo, &_view, nullptr);
+        
+        err = {};
+        lrhi_create_texture_view(_device, &vinfo, &_view, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create texture view: %s\n", err.message);
+            lrhi_destroy_texture(_tex);
+            lrhi_destroy_buffer(_buf);
+            _tex = nullptr;
+            _buf = nullptr;
+            return;
+        }
 
-        lrhi_create_residency_set(_device, &_rs, nullptr);
-        lrhi_residency_set_add_texture(_rs, _tex, nullptr);
-        lrhi_residency_set_add_buffer(_rs, _buf, nullptr);
-        lrhi_residency_set_update(_rs, nullptr);
+        err = {};
+        lrhi_create_residency_set(_device, &_rs, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to create residency set: %s\n", err.message);
+            lrhi_destroy_texture_view(_view);
+            lrhi_destroy_texture(_tex);
+            lrhi_destroy_buffer(_buf);
+            _view = nullptr;
+            _tex = nullptr;
+            _buf = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_texture(_rs, _tex, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add texture to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_texture_view(_view);
+            lrhi_destroy_texture(_tex);
+            lrhi_destroy_buffer(_buf);
+            _rs = nullptr;
+            _view = nullptr;
+            _tex = nullptr;
+            _buf = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_add_buffer(_rs, _buf, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to add buffer to residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_texture_view(_view);
+            lrhi_destroy_texture(_tex);
+            lrhi_destroy_buffer(_buf);
+            _rs = nullptr;
+            _view = nullptr;
+            _tex = nullptr;
+            _buf = nullptr;
+            return;
+        }
+        
+        err = {};
+        lrhi_residency_set_update(_rs, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS) {
+            fprintf(stderr, "Failed to update residency set: %s\n", err.message);
+            lrhi_destroy_residency_set(_rs);
+            lrhi_destroy_texture_view(_view);
+            lrhi_destroy_texture(_tex);
+            lrhi_destroy_buffer(_buf);
+            _rs = nullptr;
+            _view = nullptr;
+            _tex = nullptr;
+            _buf = nullptr;
+            return;
+        }
+        
+        _init_success = true;
     }
     
     test_result run(bool bake_mode) override {
-        if (!_buf) return {false, "Upload buffer is null (creation likely failed)"};
+        if (!_init_success) return {false, "Initialization failed"};
+        if (!_buf || !_tex || !_view) return {false, "Resources are null (creation likely failed)"};
+        
         LRHIError map_err = {};
         void* ptr = lrhi_buffer_map(_buf, &map_err);
         if (map_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !ptr) {
             return {false, std::string("map upload buffer failed: ") + map_err.message};
         }
         for(uint32_t i=0; i<W*H; ++i) ((uint32_t*)ptr)[i] = 0xFF00FF00; // green 
+        
+        map_err = {};
         lrhi_buffer_unmap(_buf);
 
         LRHICommandQueue q=nullptr; LRHIFence f=nullptr; LRHICommandList cmd=nullptr; std::string err;
         if (!barrier_begin_cmd(_device, &q, &f, &cmd, err)) return {false, err};
-        lrhi_command_queue_add_residency_set(q, _rs, nullptr);
+        
+        LRHIError res_err = {};
+        lrhi_command_queue_add_residency_set(q, _rs, &res_err);
+        if (res_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("add residency set failed: ") + res_err.message};
+        }
 
         LRHICopyPass cp = lrhi_copy_pass_begin(cmd, nullptr);
+        if (!cp) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, "copy pass begin failed"};
+        }
+        
         LRHIRegion reg = {0, 0, 0, W, H, 1};
-        lrhi_copy_pass_copy_buffer_to_texture(cp, _buf, 0, W * 4, W * H * 4, _tex, reg, 0, 0, nullptr);
-        lrhi_copy_pass_encoder_barrier(cp, LUMINARY_RHI_RENDER_STAGE_FRAGMENT, nullptr);
-        lrhi_copy_pass_end(cp, nullptr);
+        LRHIError cp_err = {};
+        lrhi_copy_pass_copy_buffer_to_texture(cp, _buf, 0, W * 4, W * H * 4, _tex, reg, 0, 0, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy buffer to texture failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_encoder_barrier(cp, LUMINARY_RHI_RENDER_STAGE_FRAGMENT, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass encoder barrier failed: ") + cp_err.message};
+        }
+        
+        cp_err = {};
+        lrhi_copy_pass_end(cp, &cp_err);
+        if (cp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("copy pass end failed: ") + cp_err.message};
+        }
 
         // Then just load the texture to confirm its contents in the render pass. Since we don't have pipeline, 
         // we'll just do a LOAD and STORE using render pass.
         LRHIRenderPassInfo rp_info = {};
         rp_info.color_attachments[0].texture_view = _view;
         rp_info.color_attachments[0].load_action = LUMINARY_RHI_RENDER_PASS_ACTION_LOAD;
-        rp_info.color_attachments[0].store_action = LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR;
-        rp_info.color_attachment_count = 1; rp_info.render_width = W; rp_info.render_height = H;
+        rp_info.color_attachments[0].store_action = LUMINARY_RHI_RENDER_PASS_ACTION_STORE;
+        rp_info.color_attachments[0].clear_color[0] = 0.0f;
+        rp_info.color_attachments[0].clear_color[1] = 0.0f;
+        rp_info.color_attachments[0].clear_color[2] = 0.0f;
+        rp_info.color_attachments[0].clear_color[3] = 1.0f;
+        rp_info.color_attachment_count = 1;
+        rp_info.render_width = W;
+        rp_info.render_height = H;
         
         LRHIRenderPass rp = lrhi_render_pass_begin(cmd, &rp_info, nullptr);
-        lrhi_render_pass_end(rp, nullptr);
+        if (!rp) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, "render pass begin failed"};
+        }
+        
+        LRHIError rp_err = {};
+        lrhi_render_pass_end(rp, &rp_err);
+        if (rp_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            std::string barrier_err;
+            barrier_end_cmd(_device, q, f, cmd, barrier_err);
+            return {false, std::string("render pass end failed: ") + rp_err.message};
+        }
 
         if (!barrier_end_cmd(_device, q, f, cmd, err)) return {false, err};
         return texture_test_result_b(_device, _tex, name, source_path, bake_mode);
