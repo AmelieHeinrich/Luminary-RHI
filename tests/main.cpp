@@ -70,7 +70,7 @@ int main(int argc, char** argv)
     // Create device
     LRHIError  err    = {};
     LRHIDevice device = nullptr;
-    lrhi_create_device(backend, &device, 1, &err);
+    lrhi_create_device(backend, &device, false, &err);
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
         fprintf(stderr, "Failed to create device: %s\n", err.message);
         return 1;

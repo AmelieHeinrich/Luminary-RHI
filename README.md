@@ -28,7 +28,7 @@ Luminary RHI is very easy to add to your project. Depending on your targeted API
 
 And the backend you wish to target. The necessary libraries to link are as follows:
 - Metal3/4: QuartzCore, Foundation, Metal, Cocoa
-- D3D12: dxgi.lib
+- D3D12: dxgi.lib, dxguid.lib, d3d12.lib
 
 ## Tests, examples, goodies
 

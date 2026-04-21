@@ -73,7 +73,9 @@ typedef enum LRHIBufferUsage {
     // Buffer will be used as an indirect command buffer (i.e. used for indirect draw/dispatch calls)
     LUMINARY_RHI_BUFFER_USAGE_INDIRECT_COMMANDS = 1 << 5,
     // Buffer will be used for staging (i.e. upload/download to/from GPU). This is a hint to the implementation that the buffer will be used for staging, and may affect how the buffer is created and where it is placed in memory.
-    LUMINARY_RHI_BUFFER_USAGE_STAGING = 1 << 6
+    LUMINARY_RHI_BUFFER_USAGE_STAGING = 1 << 6,
+    // Buffer will be used for readback
+    LUMINARY_RHI_BUFFER_USAGE_READBACK = 1 << 7,
 } LRHIBufferUsage;
 
 typedef enum LRHIRenderPassAction {

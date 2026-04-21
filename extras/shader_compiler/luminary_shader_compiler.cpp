@@ -13,13 +13,14 @@ extern uint8_t* __luminary_compile_shader_msc(const LuminaryShaderCompilerOption
 uint8_t* luminary_compile_shader(const LuminaryShaderCompilerOptions* options, uint64_t* out_bytecode_size)
 {
     switch (options->bytecode) {
+#if defined(LRHI_MACOS)
         case LUMINARY_SHADING_BYTECODE_METALLIB:
             if (options->shading_language == LUMINARY_SHADING_LANGUAGE_MSL) {
                 return __luminary_compile_shader_msl(options, out_bytecode_size);
             } else {
                 return __luminary_compile_shader_msc(options, out_bytecode_size);
             }
-#if !defined(LRHI_MACOS)
+#elif defined(LRHI_WINDOWS)
         case LUMINARY_SHADING_BYTECODE_DXIL:
             return __luminary_compile_shader_dxil(options, out_bytecode_size);
         case LUMINARY_SHADING_BYTECODE_SPIRV:

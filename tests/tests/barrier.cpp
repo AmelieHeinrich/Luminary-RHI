@@ -56,8 +56,23 @@ static bool barrier_begin_cmd(LRHIDevice device,
 {
     LRHIError err = {};
     lrhi_create_command_queue(device, out_queue, &err);
+    if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+        err_out = std::string("create queue: ") + err.message;
+        return false;
+    }
     lrhi_create_fence(device, 0, out_fence, &err);
+    if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+        err_out = std::string("create fence: ") + err.message;
+        lrhi_destroy_command_queue(*out_queue); *out_queue = nullptr;
+        return false;
+    }
     lrhi_create_command_list(*out_queue, out_cmd, &err);
+    if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+        err_out = std::string("create cmd: ") + err.message;
+        lrhi_destroy_fence(*out_fence); *out_fence = nullptr;
+        lrhi_destroy_command_queue(*out_queue); *out_queue = nullptr;
+        return false;
+    }
 
     err = {};
     lrhi_command_list_begin(*out_cmd, &err);
@@ -119,12 +134,18 @@ public:
 
     void init(LRHIDevice device) override {
         _device = device;
-        LRHIBufferUsage u = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_READ | LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE);
+        LRHIBufferUsage u = LUMINARY_RHI_BUFFER_USAGE_STAGING;
         LRHIBufferInfo info = {}; info.size = SIZE; info.stride = 4; info.usage = u;
         LRHIError err = {};
         lrhi_create_buffer(_device, &info, &_bufA, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS)
+            fprintf(stderr, "Failed to create buffer A: %s\n", err.message);
         lrhi_create_buffer(_device, &info, &_bufB, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS)
+            fprintf(stderr, "Failed to create buffer B: %s\n", err.message);
         lrhi_create_buffer(_device, &info, &_bufC, &err);
+        if (err.severity != LUMINARY_RHI_ERROR_SEVERITY_SUCCESS)
+            fprintf(stderr, "Failed to create buffer C: %s\n", err.message);
         lrhi_create_residency_set(_device, &_rs, &err);
         lrhi_residency_set_add_buffer(_rs, _bufA, nullptr);
         lrhi_residency_set_add_buffer(_rs, _bufB, nullptr);
@@ -133,7 +154,12 @@ public:
     }
     
     test_result run(bool bake_mode) override {
-        void* ptr = lrhi_buffer_map(_bufA, nullptr);
+        if (!_bufA) return {false, "Buffer A is null (creation likely failed)"};
+        LRHIError map_err = {};
+        void* ptr = lrhi_buffer_map(_bufA, &map_err);
+        if (map_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !ptr) {
+            return {false, std::string("map buffer A failed: ") + map_err.message};
+        }
         for(uint32_t i=0; i<SIZE/4; ++i) ((uint32_t*)ptr)[i] = i + 1;
         lrhi_buffer_unmap(_bufA);
         
@@ -185,7 +211,7 @@ public:
 
     void init(LRHIDevice device) override {
         _device = device;
-        LRHIBufferUsage u = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_READ | LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE);
+        LRHIBufferUsage u = LUMINARY_RHI_BUFFER_USAGE_STAGING;
         LRHIBufferInfo info = {}; info.size = SIZE; info.stride = 4; info.usage = u;
         LRHIError err = {};
         lrhi_create_buffer(_device, &info, &_bufA, &err);
@@ -199,7 +225,12 @@ public:
     }
     
     test_result run(bool bake_mode) override {
-        void* ptr = lrhi_buffer_map(_bufA, nullptr);
+        if (!_bufA) return {false, "Buffer A is null (creation likely failed)"};
+        LRHIError map_err = {};
+        void* ptr = lrhi_buffer_map(_bufA, &map_err);
+        if (map_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !ptr) {
+            return {false, std::string("map buffer A failed: ") + map_err.message};
+        }
         for(uint32_t i=0; i<SIZE/4; ++i) ((uint32_t*)ptr)[i] = i + 2;
         lrhi_buffer_unmap(_bufA);
         
@@ -255,7 +286,7 @@ public:
     void init(LRHIDevice device) override {
         _device = device;
         LRHIBufferInfo binfo = {}; binfo.size = W * H * 4; binfo.stride = 4;
-        binfo.usage = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_READ | LUMINARY_RHI_BUFFER_USAGE_SHADER_WRITE);
+        binfo.usage = (LRHIBufferUsage)(LUMINARY_RHI_BUFFER_USAGE_SHADER_READ | LUMINARY_RHI_BUFFER_USAGE_STAGING);
         lrhi_create_buffer(_device, &binfo, &_buf, nullptr);
 
         LRHITextureInfo info = {}; info.width = W; info.height = H; info.depth = 1;
@@ -277,7 +308,12 @@ public:
     }
     
     test_result run(bool bake_mode) override {
-        void* ptr = lrhi_buffer_map(_buf, nullptr);
+        if (!_buf) return {false, "Upload buffer is null (creation likely failed)"};
+        LRHIError map_err = {};
+        void* ptr = lrhi_buffer_map(_buf, &map_err);
+        if (map_err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !ptr) {
+            return {false, std::string("map upload buffer failed: ") + map_err.message};
+        }
         for(uint32_t i=0; i<W*H; ++i) ((uint32_t*)ptr)[i] = 0xFF00FF00; // green 
         lrhi_buffer_unmap(_buf);
 

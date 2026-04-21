@@ -16,6 +16,9 @@ LRHIBackend lrhi_default_backend(void)
 void lrhi_create_device(LRHIBackend backend, LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error)
 {
     switch (backend) {
+#ifdef LRHI_WINDOWS
+    case LUMINARY_RHI_BACKEND_D3D12: lrhi_d3d12_create_device(out_device, enable_debug, out_error); return;
+#endif
 #ifdef LRHI_MACOS
         case LUMINARY_RHI_BACKEND_METAL3: lrhi_metal3_create_device(out_device, enable_debug, out_error); return;
         case LUMINARY_RHI_BACKEND_METAL4: lrhi_metal4_create_device(out_device, enable_debug, out_error); return;
@@ -91,11 +94,21 @@ void lrhi_get_buffer_info(LRHIBuffer buffer, LRHIBufferInfo* out_info)
 
 void* lrhi_buffer_map(LRHIBuffer buffer, LRHIError* out_error)
 {
+    if (!buffer) {
+        if (out_error) {
+            snprintf(out_error->message, sizeof(out_error->message), "Invalid buffer");
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return NULL;
+    }
     return ((LRHIBufferBase*)buffer)->vtable->buffer_map(buffer, out_error);
 }
 
 void lrhi_buffer_unmap(LRHIBuffer buffer)
 {
+    if (!buffer) {
+        return;
+    }
     ((LRHIBufferBase*)buffer)->vtable->buffer_unmap(buffer);
 }
 

@@ -1,9 +1,9 @@
 #include "luminary_shader_compiler.h"
 
-#include "msc/ir_input_topology.h"
-#include "msc/metal_irconverter.h"
-#include "msc/WinAdapter.h"
-#include "msc/dxcapi.h"
+#include "ext/ir_input_topology.h"
+#include "ext/metal_irconverter.h"
+#include "ext/WinAdapter.h"
+#include "ext/dxcapi.h"
 
 #include <stdio.h>
 #include <dlfcn.h>

@@ -9,5 +9,6 @@ tests/output
 *.swift
 .claude
 diag
+vsxmake2022
 
 .DS_Store
