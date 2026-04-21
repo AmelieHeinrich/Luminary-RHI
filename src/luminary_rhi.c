@@ -16,6 +16,9 @@ LRHIBackend lrhi_default_backend(void)
 void lrhi_create_device(LRHIBackend backend, LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error)
 {
     switch (backend) {
+#if defined(LRHI_WINDOWS) || defined(LRHI_LINUX)
+    case LUMINARY_RHI_BACKEND_VULKAN: lrhi_vulkan_create_device(out_device, enable_debug, out_error); return;
+#endif
 #ifdef LRHI_WINDOWS
     case LUMINARY_RHI_BACKEND_D3D12: lrhi_d3d12_create_device(out_device, enable_debug, out_error); return;
 #endif

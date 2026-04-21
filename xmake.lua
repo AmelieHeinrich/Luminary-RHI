@@ -26,11 +26,11 @@ target("luminary_rhi")
         add_files("src/luminary_rhi_metal3.m")
         add_files("src/luminary_rhi_metal4.m")
     elseif is_plat("windows") then
-        add_files("src/luminary_rhi_d3d12.c")
+        add_files("src/luminary_rhi_d3d12.c", "src/luminary_rhi_vulkan.c", "src/ext/volk.c", "src/ext/vk_mem_alloc.cpp")
         add_defines("NOMINMAX", "WIN32_LEAN_AND_MEAN", "COBJMACROS", "CINTERFACE")
         add_syslinks("bin/WinPixEventRuntime.lib")
     elseif is_plat("linux") then
-        add_files("src/luminary_rhi_vulkan.c")
+        add_files("src/luminary_rhi_vulkan.c", "src/ext/volk.c", "src/ext/vk_mem_alloc.cpp")
     end
 
 target("examples")
@@ -78,6 +78,8 @@ target("shader_compiler")
         add_files("extras/shader_compiler/luminary_shader_compiler_msc.mm")
     elseif is_plat("windows") then
         add_files("extras/shader_compiler/luminary_shader_compiler_dxil.cpp")
+        add_files("extras/shader_compiler/luminary_shader_compiler_spirv.cpp")
+    elseif is_plat("linux") then
         add_files("extras/shader_compiler/luminary_shader_compiler_spirv.cpp")
     end
 

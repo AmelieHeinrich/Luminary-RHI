@@ -10,15 +10,15 @@ This project is a *work in progress*.
 
 - Metal 3 : stable
 - Metal 4 : stable
-- Vulkan : unimplemented
-- D3D12 : unimplemented
+- Vulkan : WIP
+- D3D12 : WIP, not prioritized
 
 ## Requirements
 
 - Metal 3 backend: Apple Silicon
 - Metal 4 backend: macOS/iOS 26, Apple Silicon
 - Vulkan backend: VK_EXT_descriptor_indexing, VK_EXT_mutable_descriptor_type, VK_KHR_unified_image_layouts
-- D3D12 backend: Shader model 6.6
+- D3D12 backend: Shader model 6.6, enhanced barriers
 
 ## How to build
 

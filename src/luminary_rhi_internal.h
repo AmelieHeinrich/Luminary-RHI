@@ -235,6 +235,10 @@ void lrhi_metal4_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
 void lrhi_d3d12_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
 #endif
 
+#if defined(LRHI_WINDOWS) || defined(LRHI_LINUX)
+void lrhi_vulkan_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error);
+#endif
+
 // Allocator — backed by lrhi_set_allocator; falls back to malloc/calloc/free
 void* lrhi_alloc(size_t size);
 void* lrhi_calloc(size_t count, size_t size);
