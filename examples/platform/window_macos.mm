@@ -1,5 +1,28 @@
 #include "window_macos.h"
 
+#include "../ext/imgui/backends/imgui_impl_osx.h"
+
+bool MacOSWindow::init_imgui()
+{
+    return ImGui_ImplOSX_Init((NSView*)window.contentView);
+}
+
+void MacOSWindow::new_imgui_frame()
+{
+    ImGui_ImplOSX_NewFrame((NSView*)window.contentView);
+}
+
+void MacOSWindow::shutdown_imgui()
+{
+    ImGui_ImplOSX_Shutdown();
+}
+
+void MacOSWindow::configure_swap_chain_info(LRHISwapChainInfo* info) const
+{
+    info->handle_type = LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER;
+    info->handle.metal_layer = get_swap_chain_handle();
+}
+
 MacOSWindow::MacOSWindow()
     : escape_pressed(false)
 {

@@ -18,12 +18,50 @@ std::string backend_to_string(LRHIBackend backend)
     }
 }
 
+static bool backend_from_string(const char* text, LRHIBackend* out_backend)
+{
+    if (strcmp(text, "vulkan") == 0 || strcmp(text, "VULKAN") == 0) {
+        *out_backend = LUMINARY_RHI_BACKEND_VULKAN;
+        return true;
+    }
+    if (strcmp(text, "d3d12") == 0 || strcmp(text, "D3D12") == 0) {
+        *out_backend = LUMINARY_RHI_BACKEND_D3D12;
+        return true;
+    }
+    if (strcmp(text, "metal3") == 0 || strcmp(text, "METAL3") == 0) {
+        *out_backend = LUMINARY_RHI_BACKEND_METAL3;
+        return true;
+    }
+    if (strcmp(text, "metal4") == 0 || strcmp(text, "METAL4") == 0) {
+        *out_backend = LUMINARY_RHI_BACKEND_METAL4;
+        return true;
+    }
+    return false;
+}
+
 int main(int argc, char** argv)
 {
     bool bake_mode = false;
+    LRHIBackend backend = lrhi_default_backend();
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--bake") == 0)
             bake_mode = true;
+        else if (strcmp(argv[i], "--backend") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--backend requires a value\n");
+                return 1;
+            }
+            if (!backend_from_string(argv[++i], &backend)) {
+                fprintf(stderr, "Unknown backend '%s'\n", argv[i]);
+                return 1;
+            }
+        } else if (strncmp(argv[i], "--backend=", 10) == 0) {
+            const char* value = argv[i] + 10;
+            if (!backend_from_string(value, &backend)) {
+                fprintf(stderr, "Unknown backend '%s'\n", value);
+                return 1;
+            }
+        }
     }
 
     if (bake_mode)
@@ -32,7 +70,7 @@ int main(int argc, char** argv)
     // Create device
     LRHIError  err    = {};
     LRHIDevice device = nullptr;
-    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL4, &device, 1, &err);
+    lrhi_create_device(backend, &device, 1, &err);
     if (err.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
         fprintf(stderr, "Failed to create device: %s\n", err.message);
         return 1;

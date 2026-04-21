@@ -7,8 +7,6 @@
 #include "examples/pbr_gltf_example.h"
 #include "examples/volumetrics_example.h"
 #include "ext/imgui/imgui.h"
-
-#include "ext/imgui/backends/imgui_impl_osx.h"
 #include "ext/imgui/backends/imgui_impl_luminary.h"
 
 #include <cfloat>
@@ -100,7 +98,7 @@ int main(void)
     LRHIError error = {};
 
     LRHIDevice device = nullptr;
-    lrhi_create_device(LUMINARY_RHI_BACKEND_METAL3, &device, 0, &error);
+    lrhi_create_device(lrhi_default_backend(), &device, 0, &error);
     if (error.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
         printf("create_device: %s\n", error.message);
         return 1;
@@ -116,6 +114,13 @@ int main(void)
     }
 
     Window* window = Window::create();
+    if (!window) {
+        printf("Window::create failed\n");
+        lrhi_destroy_command_queue(queue);
+        lrhi_destroy_device(device);
+        return 1;
+    }
+
     int width, height;
     window->get_width_and_height(&width, &height);
 
@@ -124,8 +129,7 @@ int main(void)
     sc_info.height             = height;
     sc_info.format             = LUMINARY_RHI_TEXTURE_FORMAT_B8G8R8A8_UNORM;
     sc_info.max_frames_in_flight = 3;
-    sc_info.handle_type        = LUMINARY_RHI_SWAP_CHAIN_HANDLE_TYPE_METAL_LAYER;
-    sc_info.handle.metal_layer = window->get_swap_chain_handle();
+    window->configure_swap_chain_info(&sc_info);
 
     LRHISwapChain swap_chain = nullptr;
     lrhi_create_swap_chain(device, queue, &sc_info, &swap_chain, &error);
@@ -156,7 +160,17 @@ int main(void)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.FontDefault = io.Fonts->AddFontFromFileTTF("extras/examples_assets/DMMono-Regular.ttf", 14.0f);
 
-    ImGui_ImplOSX_Init((__bridge NSView*)window->get_native_view_handle());
+    if (!window->init_imgui()) {
+        printf("Window ImGui init failed\n");
+        lrhi_destroy_command_list(cmd);
+        lrhi_destroy_residency_set(rs);
+        lrhi_destroy_fence(fence);
+        lrhi_destroy_swap_chain(swap_chain);
+        lrhi_destroy_command_queue(queue);
+        lrhi_destroy_device(device);
+        delete window;
+        return 1;
+    }
 
     ImGui_ImplLuminary_InitInfo imgui_info = {};
     imgui_info.device = device;
@@ -181,169 +195,163 @@ int main(void)
     // Main loop
     // ---------------------------------------------------------------------------
     while (!window->should_close()) {
-#ifdef __APPLE__
-        @autoreleasepool {
-#else
-            {
-#endif
-            window->poll_events();
-            if (window->should_close())
-                break;
+        window->poll_events();
+        if (window->should_close())
+            break;
 
-            window->get_width_and_height(&width, &height);
-            if (width <= 0 || height <= 0)
-                continue;
-            
-            // Acquire swapchain texture (borrowed — never destroyed by us)
-            LRHITexture sc_tex = lrhi_swap_chain_get_current_texture(swap_chain, &error);
-            if (error.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
-                printf("get_current_texture: %s\n", error.message);
-                break;
-            }
-        
-            lrhi_residency_set_update(rs, nullptr);
-        
-            // Per-frame texture view
-            LRHITextureView sc_view = make_view(device, sc_tex,
-                LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET,
-                LUMINARY_RHI_TEXTURE_DIMENSIONS_2D);
-            
-            lrhi_command_list_reset(cmd, &error);
-            lrhi_command_list_begin(cmd, &error);
+        window->get_width_and_height(&width, &height);
+        if (width <= 0 || height <= 0)
+            continue;
 
-            if (window->consume_escape_pressed()) {
-                active_example.reset();
-            }
-
-            ImGui_ImplOSX_NewFrame((__bridge NSView*)window->get_native_view_handle());
-            ImGui_ImplLuminary_NewFrame();
-            ImGui::NewFrame();
-
-            if (!active_example) {
-                const ImGuiViewport* viewport = ImGui::GetMainViewport();
-                ImGui::SetNextWindowPos(viewport->WorkPos);
-                ImGui::SetNextWindowSize(viewport->WorkSize);
-                ImGui::SetNextWindowViewport(viewport->ID);
-
-                ImGuiWindowFlags menu_flags = ImGuiWindowFlags_NoDecoration |
-                                              ImGuiWindowFlags_NoMove |
-                                              ImGuiWindowFlags_NoResize |
-                                              ImGuiWindowFlags_NoSavedSettings |
-                                              ImGuiWindowFlags_NoBringToFrontOnFocus |
-                                              ImGuiWindowFlags_NoNavFocus;
-
-                ImGui::Begin("Luminary Examples", nullptr, menu_flags);
-                ImGui::TextUnformatted("Select an example to run.");
-                ImGui::Spacing();
-                DrawDeviceInfo(device_info);
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
-
-                AddExample<HelloTriangleExample>(
-                    "hello_triangle",
-                    "Hello Triangle",
-                    "A minimal graphics example that renders a single triangle.",
-                    active_example,
-                    device,
-                    sc_info.format);
-                AddExample<HelloCubeExample>(
-                    "hello_cube",
-                    "Hello Cube",
-                    "A spinning textured cube with a CPU-generated rainbow checkerboard.",
-                    active_example,
-                    device,
-                    sc_info.format);
-                AddExample<ComputeParticlesExample>(
-                    "compute_particles",
-                    "Compute Particles",
-                    "A 1,000,000-particle galaxy updated in compute and rendered as points.",
-                    active_example,
-                    device,
-                    sc_info.format);
-                AddExample<VolumetricsExample>(
-                    "volumetrics",
-                    "Volumetrics",
-                    "Simple volumetric clouds using a compute-generated Worley 3D texture and raymarching.",
-                    active_example,
-                    device,
-                    sc_info.format);
-                AddExample<CornellPathtracerExample>(
-                    "cornell_pathtracer",
-                    "Cornell Pathtracer",
-                    "CPU-built Cornell box traced in compute RayQuery with history accumulation and tonemapping.",
-                    active_example,
-                    device,
-                    sc_info.format);
-                AddExample<PbrGltfExample>(
-                    "pbr_gltf",
-                    "PBR glTF",
-                    "Forward-rendered glTF model viewer using load_mesh/load_skinned_mesh and PBR maps.",
-                    active_example,
-                    device,
-                    sc_info.format);
-
-                ImGui::End();
-            }
-
-            if (active_example) {
-                active_example->record(cmd, sc_view, width, height, rs);
-                active_example->draw_ui();
-            }
-
-            ImGui::Render();
-
-            // ImGui overlay pass
-            LRHIRenderPassInfo rp_info = {};
-            rp_info.color_attachments[0].texture_view = sc_view;
-            rp_info.color_attachments[0].load_action = active_example
-                ? LUMINARY_RHI_RENDER_PASS_ACTION_LOAD
-                : LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR;
-            rp_info.color_attachments[0].store_action = LUMINARY_RHI_RENDER_PASS_ACTION_STORE;
-            rp_info.color_attachments[0].clear_color[0] = 0.1f;
-            rp_info.color_attachments[0].clear_color[1] = 0.1f;
-            rp_info.color_attachments[0].clear_color[2] = 0.1f;
-            rp_info.color_attachments[0].clear_color[3] = 1.0f;
-            rp_info.color_attachment_count              = 1;
-            rp_info.render_width                        = (uint32_t)width;
-            rp_info.render_height                       = (uint32_t)height;
-
-            LRHIRenderPass rp = lrhi_render_pass_begin(cmd, &rp_info, &error);
-
-            if (error.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !rp) {
-                lrhi_destroy_texture_view(sc_view);
-                break;
-            }
-
-            if (active_example) {
-                lrhi_render_pass_encoder_barrier(
-                    rp,
-                    (LRHIRenderStage)(LUMINARY_RHI_RENDER_STAGE_VERTEX |
-                                      LUMINARY_RHI_RENDER_STAGE_FRAGMENT |
-                                      LUMINARY_RHI_RENDER_STAGE_COMPUTE |
-                                      LUMINARY_RHI_RENDER_STAGE_MESH |
-                                      LUMINARY_RHI_RENDER_STAGE_TASK |
-                                      LUMINARY_RHI_RENDER_STAGE_ACCELERATION_STRUCTURE_BUILD |
-                                      LUMINARY_RHI_RENDER_STAGE_COPY),
-                    LUMINARY_RHI_RENDER_STAGE_FRAGMENT,
-                    &error);
-            }
-
-            ImGui_ImplLuminary_RenderDrawData(ImGui::GetDrawData(), rp);
-
-            lrhi_render_pass_end(rp, &error);
-            lrhi_command_list_end(cmd, &error);
-            
-            // Submit and wait
-            ++fence_val;
-            lrhi_command_queue_submit(queue, &cmd, 1, fence, fence_val, nullptr, 0, nullptr);
-            lrhi_fence_wait(fence, fence_val, 5000000000ULL, nullptr);
-            
-            lrhi_swap_chain_present(swap_chain, &error);
-            
-            // Per-frame cleanup
-            lrhi_destroy_texture_view(sc_view);
+        // Acquire swapchain texture (borrowed — never destroyed by us)
+        LRHITexture sc_tex = lrhi_swap_chain_get_current_texture(swap_chain, &error);
+        if (error.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR) {
+            printf("get_current_texture: %s\n", error.message);
+            break;
         }
+
+        lrhi_residency_set_update(rs, nullptr);
+
+        // Per-frame texture view
+        LRHITextureView sc_view = make_view(device, sc_tex,
+            LUMINARY_RHI_TEXTURE_USAGE_RENDER_TARGET,
+            LUMINARY_RHI_TEXTURE_DIMENSIONS_2D);
+
+        lrhi_command_list_reset(cmd, &error);
+        lrhi_command_list_begin(cmd, &error);
+
+        if (window->consume_escape_pressed()) {
+            active_example.reset();
+        }
+
+        window->new_imgui_frame();
+        ImGui_ImplLuminary_NewFrame();
+        ImGui::NewFrame();
+
+        if (!active_example) {
+            const ImGuiViewport* viewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(viewport->WorkPos);
+            ImGui::SetNextWindowSize(viewport->WorkSize);
+            ImGui::SetNextWindowViewport(viewport->ID);
+
+            ImGuiWindowFlags menu_flags = ImGuiWindowFlags_NoDecoration |
+                                          ImGuiWindowFlags_NoMove |
+                                          ImGuiWindowFlags_NoResize |
+                                          ImGuiWindowFlags_NoSavedSettings |
+                                          ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                          ImGuiWindowFlags_NoNavFocus;
+
+            ImGui::Begin("Luminary Examples", nullptr, menu_flags);
+            ImGui::TextUnformatted("Select an example to run.");
+            ImGui::Spacing();
+            DrawDeviceInfo(device_info);
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            AddExample<HelloTriangleExample>(
+                "hello_triangle",
+                "Hello Triangle",
+                "A minimal graphics example that renders a single triangle.",
+                active_example,
+                device,
+                sc_info.format);
+            AddExample<HelloCubeExample>(
+                "hello_cube",
+                "Hello Cube",
+                "A spinning textured cube with a CPU-generated rainbow checkerboard.",
+                active_example,
+                device,
+                sc_info.format);
+            AddExample<ComputeParticlesExample>(
+                "compute_particles",
+                "Compute Particles",
+                "A 1,000,000-particle galaxy updated in compute and rendered as points.",
+                active_example,
+                device,
+                sc_info.format);
+            AddExample<VolumetricsExample>(
+                "volumetrics",
+                "Volumetrics",
+                "Simple volumetric clouds using a compute-generated Worley 3D texture and raymarching.",
+                active_example,
+                device,
+                sc_info.format);
+            AddExample<CornellPathtracerExample>(
+                "cornell_pathtracer",
+                "Cornell Pathtracer",
+                "CPU-built Cornell box traced in compute RayQuery with history accumulation and tonemapping.",
+                active_example,
+                device,
+                sc_info.format);
+            AddExample<PbrGltfExample>(
+                "pbr_gltf",
+                "PBR glTF",
+                "Forward-rendered glTF model viewer using load_mesh/load_skinned_mesh and PBR maps.",
+                active_example,
+                device,
+                sc_info.format);
+
+            ImGui::End();
+        }
+
+        if (active_example) {
+            active_example->record(cmd, sc_view, width, height, rs);
+            active_example->draw_ui();
+        }
+
+        ImGui::Render();
+
+        // ImGui overlay pass
+        LRHIRenderPassInfo rp_info = {};
+        rp_info.color_attachments[0].texture_view = sc_view;
+        rp_info.color_attachments[0].load_action = active_example
+            ? LUMINARY_RHI_RENDER_PASS_ACTION_LOAD
+            : LUMINARY_RHI_RENDER_PASS_ACTION_CLEAR;
+        rp_info.color_attachments[0].store_action = LUMINARY_RHI_RENDER_PASS_ACTION_STORE;
+        rp_info.color_attachments[0].clear_color[0] = 0.1f;
+        rp_info.color_attachments[0].clear_color[1] = 0.1f;
+        rp_info.color_attachments[0].clear_color[2] = 0.1f;
+        rp_info.color_attachments[0].clear_color[3] = 1.0f;
+        rp_info.color_attachment_count              = 1;
+        rp_info.render_width                        = (uint32_t)width;
+        rp_info.render_height                       = (uint32_t)height;
+
+        LRHIRenderPass rp = lrhi_render_pass_begin(cmd, &rp_info, &error);
+
+        if (error.severity == LUMINARY_RHI_ERROR_SEVERITY_ERROR || !rp) {
+            lrhi_destroy_texture_view(sc_view);
+            break;
+        }
+
+        if (active_example) {
+            lrhi_render_pass_encoder_barrier(
+                rp,
+                (LRHIRenderStage)(LUMINARY_RHI_RENDER_STAGE_VERTEX |
+                                  LUMINARY_RHI_RENDER_STAGE_FRAGMENT |
+                                  LUMINARY_RHI_RENDER_STAGE_COMPUTE |
+                                  LUMINARY_RHI_RENDER_STAGE_MESH |
+                                  LUMINARY_RHI_RENDER_STAGE_TASK |
+                                  LUMINARY_RHI_RENDER_STAGE_ACCELERATION_STRUCTURE_BUILD |
+                                  LUMINARY_RHI_RENDER_STAGE_COPY),
+                LUMINARY_RHI_RENDER_STAGE_FRAGMENT,
+                &error);
+        }
+
+        ImGui_ImplLuminary_RenderDrawData(ImGui::GetDrawData(), rp);
+
+        lrhi_render_pass_end(rp, &error);
+        lrhi_command_list_end(cmd, &error);
+
+        // Submit and wait
+        ++fence_val;
+        lrhi_command_queue_submit(queue, &cmd, 1, fence, fence_val, nullptr, 0, nullptr);
+        lrhi_fence_wait(fence, fence_val, 5000000000ULL, nullptr);
+
+        lrhi_swap_chain_present(swap_chain, &error);
+
+        // Per-frame cleanup
+        lrhi_destroy_texture_view(sc_view);
     }
 
     // ---------------------------------------------------------------------------
@@ -351,7 +359,7 @@ int main(void)
     // ---------------------------------------------------------------------------
     active_example.reset();
     ImGui_ImplLuminary_Shutdown();
-    ImGui_ImplOSX_Shutdown();
+    window->shutdown_imgui();
     ImGui::DestroyContext();
 
     lrhi_destroy_command_list(cmd);

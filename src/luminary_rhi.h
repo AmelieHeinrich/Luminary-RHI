@@ -501,6 +501,8 @@ typedef struct LRHIAllocator {
 extern "C" {
 #endif
 
+LRHIBackend lrhi_default_backend(void);
+
 void lrhi_set_allocator(LRHIAllocator allocator);
 
 /// Device functions

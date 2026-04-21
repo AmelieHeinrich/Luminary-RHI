@@ -2,6 +2,17 @@
 
 #include <stdio.h>
 
+LRHIBackend lrhi_default_backend(void)
+{
+#ifdef LRHI_MACOS
+    return LUMINARY_RHI_BACKEND_METAL4;
+#elif defined(_WIN32)
+    return LUMINARY_RHI_BACKEND_D3D12;
+#else
+    return LUMINARY_RHI_BACKEND_VULKAN;
+#endif
+}
+
 void lrhi_create_device(LRHIBackend backend, LRHIDevice* out_device, uint8_t enable_debug, LRHIError* out_error)
 {
     switch (backend) {

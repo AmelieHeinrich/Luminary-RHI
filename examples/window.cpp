@@ -15,5 +15,7 @@ Window* Window::create()
 #else
     #error "Unsupported Apple platform"
 #endif
+#else
+    return nullptr;
 #endif
 }
