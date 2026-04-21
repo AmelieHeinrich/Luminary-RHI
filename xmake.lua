@@ -8,6 +8,7 @@ if is_plat("windows") then
     add_syslinks("dxgi", "d3d12")
 elseif is_plat("linux") then
     add_defines("LRHI_LINUX", { public = true })
+    add_requires("glfw", { system = true })
 elseif is_plat("macosx") then
     add_defines("LRHI_MACOS", { public = true })
     add_cflags("-x objective-c", "-fobjc-arc", { public = true })
@@ -28,6 +29,8 @@ target("luminary_rhi")
         add_files("src/luminary_rhi_d3d12.c")
         add_defines("NOMINMAX", "WIN32_LEAN_AND_MEAN", "COBJMACROS", "CINTERFACE")
         add_syslinks("bin/WinPixEventRuntime.lib")
+    elseif is_plat("linux") then
+        add_files("src/luminary_rhi_vulkan.c")
     end
 
 target("examples")
@@ -58,6 +61,10 @@ target("examples")
             os.cp("bin/D3D12Core.dll", path.join(target:targetdir(), "D3D12Core.dll"))
             os.cp("bin/d3d12SDKLayers.dll", path.join(target:targetdir(), "d3d12SDKLayers.dll"))
         end)
+    elseif is_plat("linux") then
+        add_files("examples/platform/window_linux.cpp", "examples/ext/imgui/backends/imgui_impl_glfw.cpp")
+        add_packages("glfw")
+        add_rpathdirs("bin/")
     end
 
 target("shader_compiler")
@@ -93,4 +100,6 @@ target("tests")
             os.cp("bin/D3D12Core.dll", path.join(target:targetdir(), "D3D12Core.dll"))
             os.cp("bin/d3d12SDKLayers.dll", path.join(target:targetdir(), "d3d12SDKLayers.dll"))
         end)
+    elseif is_plat("linux") then
+        add_rpathdirs("bin/")
     end

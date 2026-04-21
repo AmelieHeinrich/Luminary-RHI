@@ -7,6 +7,8 @@
     #endif
 #elif defined(_WIN32)
     #include "platform/window_win32.h"
+#elif defined(LRHI_LINUX)
+    #include "platform/window_linux.h"
 #endif
 
 Window* Window::create()
@@ -19,6 +21,13 @@ Window* Window::create()
 #endif
 #elif defined(_WIN32)
     Window* window = new Win32Window();
+    if (!window->get_native_view_handle()) {
+        delete window;
+        return nullptr;
+    }
+    return window;
+#elif defined(LRHI_LINUX)
+    Window* window = new LinuxWindow();
     if (!window->get_native_view_handle()) {
         delete window;
         return nullptr;
