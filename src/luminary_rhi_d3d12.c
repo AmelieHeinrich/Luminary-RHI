@@ -8,10 +8,39 @@
 #include "ext/d3d12.h"
 #include <dxgi1_6.h>
 
+#define MAX_RESOURCE_HEAP_SIZE 1'000'000
+#define MAX_SAMPLER_HEAP_SIZE 2048
+#define MAX_RTV_HEAP_SIZE 2048
+#define MAX_DSV_HEAP_SIZE 2048
+
 __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 __declspec(dllexport) extern const uint32_t D3D12SDKVersion = 614;
 __declspec(dllexport) extern const char* D3D12SDKPath = ".\\.";
+
+typedef struct LRHIBindlessManagerD3D12 {
+	ID3D12DescriptorHeap* cbv_srv_uav_heap;
+	ID3D12DescriptorHeap* sampler_heap;
+	ID3D12DescriptorHeap* rtv_heap;
+	ID3D12DescriptorHeap* dsv_heap;
+
+	uint32_t cbv_srv_uav_descriptor_size;
+	uint32_t sampler_descriptor_size;
+	uint32_t rtv_descriptor_size;
+	uint32_t dsv_descriptor_size;
+
+	LRHIFreeList cbv_srv_uav_free_list;
+	LRHIFreeList sampler_free_list;
+	LRHIFreeList rtv_free_list;
+	LRHIFreeList dsv_free_list;
+} LRHIBindlessManagerD3D12;
+
+typedef struct LRHIDescriptorD3D12 {
+	uint32_t descriptor_index;
+	D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle;
+	D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
+	D3D12_DESCRIPTOR_HEAP_TYPE heap_type;
+} LRHIDescriptorD3D12;
 
 typedef struct LRHIDeviceD3D12 {
 	LRHIDeviceBase base;
@@ -22,6 +51,8 @@ typedef struct LRHIDeviceD3D12 {
 	IDXGIFactory1* factory;
     IDXGIAdapter1* adapter;
     ID3D12Debug1* debug_controller;
+
+	LRHIBindlessManagerD3D12 bindless_manager;
 
     ID3D12RootSignature* global_root_signature;
 
@@ -51,7 +82,7 @@ typedef struct LRHIBufferD3D12 {
 typedef struct LRHICommandQueueD3D12 {
 	LRHICommandQueueBase base;
 
-    ID3D12Device* device_ref;
+    LRHIDeviceD3D12* device_ref;
     ID3D12CommandQueue* queue;
 } LRHICommandQueueD3D12;
 
@@ -65,6 +96,7 @@ typedef struct LRHIFenceD3D12 {
 typedef struct LRHICommandListD3D12 {
 	LRHICommandListBase base;
 
+	LRHIDeviceD3D12* device_ref;
     ID3D12GraphicsCommandList10* command_list;
     ID3D12CommandAllocator* command_allocator;
     uint8_t push_constants[128]; // Stored for execute indirect
@@ -90,6 +122,9 @@ typedef struct LRHISwapChainD3D12 {
 typedef struct LRHITextureViewD3D12 {
 	LRHITextureViewBase base;
 	LRHITextureViewInfo info;
+
+	LRHIDeviceD3D12* device_ref;
+	LRHIDescriptorD3D12 descriptor;
 } LRHITextureViewD3D12;
 
 typedef struct LRHIRenderPassD3D12 {
@@ -135,6 +170,9 @@ typedef struct LRHIComputePassD3D12 {
 typedef struct LRHIBufferViewD3D12 {
 	LRHIBufferViewBase base;
 	LRHIBufferViewInfo info;
+
+	LRHIDeviceD3D12* device_ref;
+	LRHIDescriptorD3D12 descriptor;
 } LRHIBufferViewD3D12;
 
 typedef struct LRHISamplerD3D12 {
@@ -161,6 +199,60 @@ typedef struct LRHITLASD3D12 {
 
     // TODO
 } LRHITLASD3D12;
+
+// Bindless manager
+static void lrhi_d3d12_bindless_manager_init(LRHIDeviceD3D12* device, LRHIError* out_error)
+{
+	D3D12_DESCRIPTOR_HEAP_DESC cbv_srv_uav_heap_desc;
+	memset(&cbv_srv_uav_heap_desc, 0, sizeof(D3D12_DESCRIPTOR_HEAP_DESC));
+	cbv_srv_uav_heap_desc.NumDescriptors = MAX_RESOURCE_HEAP_SIZE;
+	cbv_srv_uav_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	cbv_srv_uav_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+	D3D12_DESCRIPTOR_HEAP_DESC sampler_heap_desc;
+	memset(&sampler_heap_desc, 0, sizeof(D3D12_DESCRIPTOR_HEAP_DESC));
+	sampler_heap_desc.NumDescriptors = MAX_SAMPLER_HEAP_SIZE;
+	sampler_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+	sampler_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+	D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_desc;
+	memset(&rtv_heap_desc, 0, sizeof(D3D12_DESCRIPTOR_HEAP_DESC));
+	rtv_heap_desc.NumDescriptors = MAX_RTV_HEAP_SIZE;
+	rtv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	rtv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+
+	D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc;
+	memset(&dsv_heap_desc, 0, sizeof(D3D12_DESCRIPTOR_HEAP_DESC));
+	dsv_heap_desc.NumDescriptors = MAX_DSV_HEAP_SIZE;
+	dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+
+	HRESULT hr;
+	hr = device->device->lpVtbl->CreateDescriptorHeap(device->device, &cbv_srv_uav_heap_desc, &IID_ID3D12DescriptorHeap, (void**)&device->bindless_manager.cbv_srv_uav_heap);
+	if (hr_to_lrhi_error(hr, out_error, "Failed to create resource heap!")) {
+		return;
+	}
+	hr = device->device->lpVtbl->CreateDescriptorHeap(device->device, &sampler_heap_desc, &IID_ID3D12DescriptorHeap, (void**)&device->bindless_manager.sampler_heap);
+	if (hr_to_lrhi_error(hr, out_error, "Failed to create sampler heap!")) {
+		return;
+	}
+	hr = device->device->lpVtbl->CreateDescriptorHeap(device->device, &rtv_heap_desc, &IID_ID3D12DescriptorHeap, (void**)&device->bindless_manager.rtv_heap);
+	if (hr_to_lrhi_error(hr, out_error, "Failed to create RTV heap!")) {
+		return;
+	}
+	hr = device->device->lpVtbl->CreateDescriptorHeap(device->device, &dsv_heap_desc, &IID_ID3D12DescriptorHeap, (void**)&device->bindless_manager.dsv_heap);
+	if (hr_to_lrhi_error(hr, out_error, "Failed to create DSV heap!")) {
+		return;
+	}
+}
+
+static void lrhi_d3d12_bindless_manager_destroy(LRHIDeviceD3D12* device)
+{
+	ID3D12DescriptorHeap_Release(device->bindless_manager.cbv_srv_uav_heap);
+	ID3D12DescriptorHeap_Release(device->bindless_manager.sampler_heap);
+	ID3D12DescriptorHeap_Release(device->bindless_manager.rtv_heap);
+	ID3D12DescriptorHeap_Release(device->bindless_manager.dsv_heap);
+}
 
 // Enum translation
 static DXGI_FORMAT lrhi_format_to_dxgi_format(LRHITextureFormat format);
@@ -565,7 +657,7 @@ static void lrhi_d3d12_set_not_implemented(LRHIError* out_error, const char* fun
 		return;
 	}
 	snprintf(out_error->message, sizeof(out_error->message), "%s is not implemented for D3D12 backend stub", function_name);
-	out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+	out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_WARNING;
 }
 
 static void lrhi_d3d12_set_error(LRHIError* out_error, const char* message)
@@ -579,9 +671,22 @@ static void lrhi_d3d12_set_error(LRHIError* out_error, const char* message)
 
 static void lrhi_d3d12_destroy_device(LRHIDevice device)
 {
-	if (device) {
-		LRHI_FREE(device);
+	LRHIDeviceD3D12* device_d3d12 = (LRHIDeviceD3D12*)device;
+
+	lrhi_d3d12_bindless_manager_destroy(device_d3d12);
+	ID3D12RootSignature_Release(device_d3d12->global_root_signature);
+	if (device_d3d12->debug_controller) {
+		ID3D12Debug_Release(device_d3d12->debug_controller);
 	}
+	IDXGIFactory6_Release(device_d3d12->factory);
+	IDXGIAdapter_Release(device_d3d12->adapter);
+	ID3D12CommandSignature_Release(device_d3d12->draw_indirect_command_signature);
+	ID3D12CommandSignature_Release(device_d3d12->dispatch_indirect_command_signature);
+	ID3D12CommandSignature_Release(device_d3d12->mesh_draw_indirect_command_signature);
+	ID3D12CommandSignature_Release(device_d3d12->mesh_draw_indirect_command_signature);
+	ID3D12Device_Release(device_d3d12->device);
+
+	LRHI_FREE(device);
 }
 
 static LRHIDeviceInfo lrhi_d3d12_get_device_info(LRHIDevice device)
@@ -1272,7 +1377,7 @@ static void lrhi_d3d12_create_command_queue(LRHIDevice device, LRHICommandQueue*
         LRHI_FREE(queue_d3d12);
         return;
     }
-    queue_d3d12->device_ref = device_d3d12->device;
+    queue_d3d12->device_ref = device_d3d12;
 	*out_queue = (LRHICommandQueue)queue_d3d12;
 }
 
@@ -1397,18 +1502,19 @@ static void lrhi_d3d12_create_command_list(LRHICommandQueue queue, LRHICommandLi
     LRHICommandListD3D12* command_list_d3d12 = LRHI_MALLOC(sizeof(LRHICommandListD3D12));
     memset(command_list_d3d12, 0, sizeof(LRHICommandListD3D12));
 	command_list_d3d12->base.vtable = &lrhi_d3d12_command_list_vtable;
-    HRESULT hr = ID3D12Device_CreateCommandAllocator(queue_d3d12->device_ref, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator, (void**)&command_list_d3d12->command_allocator);
+    HRESULT hr = ID3D12Device_CreateCommandAllocator(queue_d3d12->device_ref->device, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator, (void**)&command_list_d3d12->command_allocator);
     if (hr_to_lrhi_error(hr, out_error, "Failed to create command allocator for command list")) {
         ID3D12GraphicsCommandList_Release(command_list_d3d12->command_list);
         LRHI_FREE(command_list_d3d12);
         return;
     }
-	hr = ID3D12Device_CreateCommandList(queue_d3d12->device_ref, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_list_d3d12->command_allocator, NULL, &IID_ID3D12GraphicsCommandList, (void**)&command_list_d3d12->command_list);
+	hr = ID3D12Device_CreateCommandList(queue_d3d12->device_ref->device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_list_d3d12->command_allocator, NULL, &IID_ID3D12GraphicsCommandList, (void**)&command_list_d3d12->command_list);
     if (hr_to_lrhi_error(hr, out_error, "Failed to create command list")) {
         LRHI_FREE(command_list_d3d12);
         return;
     }
     ID3D12GraphicsCommandList_Close(command_list_d3d12->command_list);
+	command_list_d3d12->device_ref = queue_d3d12->device_ref;
     *out_command_list = (LRHICommandList)command_list_d3d12;
 }
 
@@ -1431,6 +1537,13 @@ static void lrhi_d3d12_command_list_begin(LRHICommandList command_list, LRHIErro
     if (hr_to_lrhi_error(hr, out_error, "Failed to reset command list")) {
         return;
     }
+
+	// Set descriptor heaps
+	ID3D12DescriptorHeap* descriptor_heaps[] = {
+		command_list_d3d12->device_ref->bindless_manager.cbv_srv_uav_heap,
+		command_list_d3d12->device_ref->bindless_manager.sampler_heap
+	};
+	ID3D12GraphicsCommandList_SetDescriptorHeaps(command_list_d3d12->command_list, 2, descriptor_heaps);
 }
 
 static void lrhi_d3d12_command_list_end(LRHICommandList command_list, LRHIError* out_error)
@@ -1684,84 +1797,6 @@ static void lrhi_d3d12_copy_pass_copy_texture_to_buffer(LRHICopyPass copy_pass, 
 		out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_SUCCESS;
 		out_error->message[0] = '\0';
 	}
-}
-
-static void lrhi_d3d12_create_residency_set(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error)
-{
-	// Residency set is a no-op on D3D12, just return object with vtable and thats it
-    (void)device;
-    (void)out_error;
-
-	LRHIResidencySetD3D12* residency_set = (LRHIResidencySetD3D12*)LRHI_MALLOC(sizeof(LRHIResidencySetD3D12));
-    residency_set->base.vtable = &lrhi_d3d12_residency_set_vtable;
-    *out_residency_set = (LRHIResidencySet)residency_set;
-}
-
-static void lrhi_d3d12_destroy_residency_set(LRHIResidencySet residency_set)
-{
-	(void)residency_set;
-}
-
-static void lrhi_d3d12_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)texture;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_add_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)buffer;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_add_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)blas;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_add_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)tlas;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)texture;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)buffer;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_remove_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)blas;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_remove_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)tlas;
-	(void)out_error;
-}
-
-static void lrhi_d3d12_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error)
-{
-	(void)residency_set;
-	(void)out_error;
 }
 
 static void lrhi_d3d12_create_swap_chain(LRHIDevice device, LRHICommandQueue queue, LRHISwapChainInfo* info, LRHISwapChain* out_swap_chain, LRHIError* out_error)
@@ -2755,6 +2790,8 @@ void lrhi_d3d12_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRHI
 		IDXGIFactory6_Release(factory6);
 	}
 
+	lrhi_d3d12_bindless_manager_init(device, out_error);
+
 	*out_device = (LRHIDevice)device;
 }
 
@@ -2829,4 +2866,82 @@ static D3D12_BARRIER_ACCESS lrhi_pipeline_usage_to_d3d12_barrier_access(LRHIRend
         case LUMINARY_RHI_RENDER_STAGE_ACCELERATION_STRUCTURE_BUILD: return D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_READ | D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_WRITE;
         default: return 0;
     }
+}
+
+static void lrhi_d3d12_create_residency_set(LRHIDevice device, LRHIResidencySet* out_residency_set, LRHIError* out_error)
+{
+	// Residency set is a no-op on D3D12, just return object with vtable and thats it
+    (void)device;
+    (void)out_error;
+
+	LRHIResidencySetD3D12* residency_set = (LRHIResidencySetD3D12*)LRHI_MALLOC(sizeof(LRHIResidencySetD3D12));
+    residency_set->base.vtable = &lrhi_d3d12_residency_set_vtable;
+    *out_residency_set = (LRHIResidencySet)residency_set;
+}
+
+static void lrhi_d3d12_destroy_residency_set(LRHIResidencySet residency_set)
+{
+	(void)residency_set;
+}
+
+static void lrhi_d3d12_residency_set_add_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)texture;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_add_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)buffer;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_add_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)blas;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_add_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)tlas;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_remove_texture(LRHIResidencySet residency_set, LRHITexture texture, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)texture;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_remove_buffer(LRHIResidencySet residency_set, LRHIBuffer buffer, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)buffer;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_remove_blas(LRHIResidencySet residency_set, LRHIBottomLevelAccelerationStructure blas, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)blas;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_remove_tlas(LRHIResidencySet residency_set, LRHITopLevelAccelerationStructure tlas, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)tlas;
+	(void)out_error;
+}
+
+static void lrhi_d3d12_residency_set_update(LRHIResidencySet residency_set, LRHIError* out_error)
+{
+	(void)residency_set;
+	(void)out_error;
 }
