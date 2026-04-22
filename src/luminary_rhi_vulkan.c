@@ -19,7 +19,9 @@ typedef struct LRHIDeviceVk {
     VkDevice device;
     VmaAllocator allocator;
 
-    // TODO: global descriptor set layout/descriptor set, command pool
+    uint32_t graphics_queue_family_index;
+
+    // TODO: global descriptor set layout/descriptor set
 } LRHIDeviceVk;
 
 typedef struct LRHITextureVk {
@@ -179,6 +181,19 @@ typedef struct LRHITLASVk {
 
     // TODO
 } LRHITLASVk;
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+static int vk_result_to_lrhi(VkResult result, LRHIError* error)
+{
+    if (result != VK_SUCCESS) {
+        sprintf(error->message, "VkResult: %d", result);
+        error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        return 1;
+    } else {
+        error->severity = LUMINARY_RHI_ERROR_SEVERITY_SUCCESS;
+        return 0;
+    }
+}
 
 // ─── Forward declarations ───────────────────────────────────────────────────
 
@@ -1487,7 +1502,106 @@ void lrhi_vulkan_create_device(LRHIDevice* out_device, uint8_t enable_debug, LRH
     device->base.vtable  = &s_device_vtable;
     device->enable_debug = enable_debug;
 
-    // TODO: volkInitialize, instance, physical device, logical device creation
+    VkResult result = volkInitialize();
+    if (vk_result_to_lrhi(result, out_error)) return;
+
+    // Create instance with optional validation layers
+    const char* layer = "VK_LAYER_khronos_validation";
+    const char* extensions[] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME  
+    };
+
+    VkApplicationInfo app_info;
+    memset(&app_info, 0, sizeof(app_info));
+    app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app_info.apiVersion = VK_API_VERSION_1_4;
+    app_info.applicationVersion = VK_MAKE_VERSION(0, 0, 1);
+    app_info.pEngineName = "Luminary RHI Engine";
+    app_info.pApplicationName = "Luminary RHI App";
+    app_info.applicationVersion = VK_MAKE_VERSION(0, 0, 1);
+
+    VkInstanceCreateInfo instance_info;
+    memset(&instance_info, 0, sizeof(VkInstanceCreateInfo));
+    instance_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    if (enable_debug) instance_info.enabledExtensionCount = 2;
+    else instance_info.enabledExtensionCount = 1;
+    instance_info.ppEnabledExtensionNames = extensions;
+    if (enable_debug) {
+        instance_info.enabledLayerCount = 1;
+        instance_info.ppEnabledLayerNames = &layer;
+    }
+    instance_info.pApplicationInfo = &app_info;
+
+    result = vkCreateInstance(&instance_info, NULL, &device->instance);
+    if (vk_result_to_lrhi(result, out_error)) return;
+
+    volkLoadInstance(device->instance);
+
+    // Now choose physical device
+    uint32_t physical_device_count = 0;
+    vkEnumeratePhysicalDevices(device->instance, &physical_device_count, NULL);
+    VkPhysicalDevice* physical_devices = LRHI_CALLOC(physical_device_count, sizeof(VkPhysicalDevice));
+    vkEnumeratePhysicalDevices(device->instance, &physical_device_count, physical_devices);
+
+    for (uint32_t i = 0; i < physical_device_count; i++) {
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(physical_devices[i], &properties);
+
+        if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            device->physical_device = physical_devices[i];
+            break;
+        }
+    }
+    // Fallback if none found
+    if (device->physical_device == VK_NULL_HANDLE) device->physical_device = physical_devices[0];
+
+    VkPhysicalDeviceProperties propeties;
+    VkPhysicalDeviceLimits limits;
+    vkGetPhysicalDeviceProperties(device->physical_device, &propeties);
+    limits = propeties.limits;
+
+    // Get support for raytracing, mesh shaders, mutable descriptor, descriptor indexing, unified image layouts, BDA
+    uint32_t extension_count = 0;
+    vkEnumerateDeviceExtensionProperties(device->physical_device, NULL, &extension_count, NULL);
+    VkExtensionProperties* extensions_properties = LRHI_CALLOC(extension_count, sizeof(VkExtensionProperties));
+    vkEnumerateDeviceExtensionProperties(device->physical_device, NULL, &extension_count, extensions_properties);
+
+    uint8_t has_unified_image_layouts = 1;
+    for (uint32_t i = 0; i < extension_count; i++) {
+        if (strcmp(extensions_properties[i].extensionName, VK_KHR_RAY_QUERY_EXTENSION_NAME) == 0) {
+            device->info.features.ray_tracing = 1;
+        }
+        if (strcmp(extensions_properties[i].extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0) {
+            device->info.features.mesh_shading = 1;
+        }
+        if (strcmp(extensions_properties[i].extensionName, VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME) == 0) {
+            device->info.features.bindless_resources = 1;
+        }
+        if (strcmp(extensions_properties[i].extensionName, VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME) == 0) {
+            has_unified_image_layouts = 1;
+        }
+    }
+    if (!device->info.features.bindless_resources || !has_unified_image_layouts) {
+        if (out_error) {
+            if (!device->info.features.bindless_resources) {
+                snprintf(out_error->message, sizeof(out_error->message), "Vulkan device does not support required feature: bindless resources");
+            } else {
+                snprintf(out_error->message, sizeof(out_error->message), "Vulkan device does not support required feature: unified image layouts");
+            }
+            out_error->severity = LUMINARY_RHI_ERROR_SEVERITY_ERROR;
+        }
+        return;
+    }
+
+    device->info.limits.max_buffer_size = limits.maxStorageBufferRange;
+    device->info.limits.max_texture_array_layers = limits.maxImageArrayLayers;
+    device->info.limits.max_texture_dimension_2d = limits.maxImageDimension2D;
+    device->info.limits.max_texture_dimension_3d = limits.maxImageDimension3D;
+    sprintf(device->info.device_name, "%s", propeties.deviceName);
+    device->info.backend = LUMINARY_RHI_BACKEND_VULKAN;
+
+    // Create device
 
     *out_device = (LRHIDevice)device;
 }

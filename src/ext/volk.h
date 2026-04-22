@@ -30,8 +30,8 @@
 #	ifdef VOLK_VULKAN_H_PATH
 #		include VOLK_VULKAN_H_PATH
 #	else /* Platform headers included below */
-#		include <vulkan/vk_platform.h>
-#		include <vulkan/vulkan_core.h>
+#		include "vulkan/vk_platform.h"
+#		include "vulkan/vulkan_core.h"
 #	endif
 #endif
 

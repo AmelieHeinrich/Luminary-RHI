@@ -21,6 +21,7 @@ target("luminary_rhi")
     add_headerfiles("src/*.h")
     add_files("src/luminary_rhi.c")
     add_files("src/luminary_rhi_internal.c")
+    add_defines("VK_NO_PROTOTYPES")
 
     if is_plat("macosx") then
         add_files("src/luminary_rhi_metal3.m")
